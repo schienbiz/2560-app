@@ -32,16 +32,9 @@ export class YahooFinanceAdapter implements MarketAdapter {
   getAssetType() { return "stock" as const }
 
   async validateSymbol(symbol: string): Promise<boolean> {
-    try {
-      const res = await fetch(`${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=5d`, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-      })
-      if (!res.ok) return false
-      const json = await res.json() as YahooResponse
-      return !!json.chart?.result?.[0]
-    } catch {
-      return false
-    }
+    // Accept any symbol that looks reasonable (letters, digits, dots, hyphens)
+    // Avoids an external API call that may be blocked or rate-limited on some hosting environments
+    return /^[A-Z0-9.\-]{1,20}$/.test(symbol.toUpperCase())
   }
 
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {

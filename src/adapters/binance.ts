@@ -17,12 +17,9 @@ export class BinanceAdapter implements MarketAdapter {
   getAssetType() { return "crypto" as const }
 
   async validateSymbol(symbol: string): Promise<boolean> {
-    try {
-      const res = await fetch(`${BASE}/api/v3/ticker/price?symbol=${symbol.toUpperCase()}`)
-      return res.ok
-    } catch {
-      return false
-    }
+    // Accept any symbol that looks like a valid crypto pair (letters + digits, 3-20 chars)
+    // Avoids an external API call that may be blocked on some hosting environments
+    return /^[A-Z0-9]{3,20}$/.test(symbol.toUpperCase())
   }
 
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {
