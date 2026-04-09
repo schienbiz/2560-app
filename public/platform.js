@@ -12,7 +12,8 @@ export async function initPlatform() {
   if (_session) return _session;
 
   // ── Telegram ──────────────────────────────────────────────────
-  if (window.Telegram?.WebApp?.initData) {
+  // Check for WebApp object existence, not initData (which can be empty string on first load)
+  if (window.Telegram?.WebApp !== undefined) {
     const tg = window.Telegram.WebApp;
     tg.expand();
     tg.ready();
@@ -27,8 +28,9 @@ export async function initPlatform() {
   }
 
   // ── LINE LIFF ─────────────────────────────────────────────────
+  // Never run LIFF inside a Telegram WebView (window.Telegram is injected by Telegram)
   const liffId = window.__LIFF_ID__ ?? import.meta.env?.VITE_LIFF_ID;
-  if (typeof liff !== "undefined" && liffId) {
+  if (typeof liff !== "undefined" && liffId && !window.Telegram) {
     try {
       await liff.init({ liffId });
       if (!liff.isLoggedIn()) {
