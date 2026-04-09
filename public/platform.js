@@ -18,8 +18,17 @@ function loadScript(src) {
   });
 }
 
+function showDebug(msg) {
+  const el = document.createElement("div");
+  el.style.cssText = "position:fixed;top:0;left:0;right:0;background:red;color:#fff;font-size:12px;padding:6px;z-index:9999;word-break:break-all";
+  el.textContent = msg;
+  document.body.appendChild(el);
+}
+
 export async function initPlatform() {
   if (_session) return _session;
+
+  showDebug(`TG=${!!window.Telegram} | TG.WA=${!!window.Telegram?.WebApp} | liff=${typeof liff} | LIFF_ID=${!!window.__LIFF_ID__}`);
 
   // ── Telegram ──────────────────────────────────────────────────
   // Check for WebApp object existence, not initData (which can be empty string on first load)
