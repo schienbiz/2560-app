@@ -28,20 +28,29 @@ function showDebug(msg) {
 export async function initPlatform() {
   if (_session) return _session;
 
-  showDebug(`TG=${!!window.Telegram} | TG.WA=${!!window.Telegram?.WebApp} | liff=${typeof liff} | LIFF_ID=${!!window.__LIFF_ID__}`);
-
   // ── Telegram ──────────────────────────────────────────────────
-  // Check for WebApp object existence, not initData (which can be empty string on first load)
-  if (window.Telegram?.WebApp !== undefined) {
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.ready();
+  // Detect via multiple signals — window.Telegram is not always injected on iOS.
+  // Telegram always appends tgWebApp* params to the URL hash when opening a Mini App.
+  const hash = location.hash.slice(1);
+  const hashParams = new URLSearchParams(hash);
+  const tgWebAppData = hashParams.get("tgWebAppData");
+  const isTelegram = window.Telegram?.WebApp !== undefined || !!tgWebAppData;
 
-    const user = tg.initDataUnsafe?.user;
+  showDebug(`TG=${!!window.Telegram} | hash_tg=${!!tgWebAppData} | isTG=${isTelegram} | LIFF_ID=${!!window.__LIFF_ID__}`);
+
+  if (isTelegram) {
+    const tg = window.Telegram?.WebApp;
+    if (tg) { tg.expand(); tg.ready(); }
+
+    // initData from window.Telegram.WebApp or from URL hash
+    const initData = tg?.initData || tgWebAppData || "";
+    const user = tg?.initDataUnsafe?.user;
+    const userId = user?.id ? String(user.id) : hashParams.get("tgWebAppUserId") ?? "tg-user";
+
     _session = {
       platform: "telegram",
-      userId: String(user?.id ?? "unknown"),
-      token: tg.initData,          // raw initData, verified server-side with HMAC
+      userId,
+      token: initData,
     };
     return _session;
   }
