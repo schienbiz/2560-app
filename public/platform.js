@@ -18,12 +18,6 @@ function loadScript(src) {
   });
 }
 
-function showDebug(msg) {
-  const el = document.createElement("div");
-  el.style.cssText = "position:fixed;top:0;left:0;right:0;background:red;color:#fff;font-size:12px;padding:6px;z-index:9999;word-break:break-all";
-  el.textContent = msg;
-  document.body.appendChild(el);
-}
 
 export async function initPlatform() {
   if (_session) return _session;
@@ -35,8 +29,6 @@ export async function initPlatform() {
   const hashParams = new URLSearchParams(hash);
   const tgWebAppData = hashParams.get("tgWebAppData");
   const isTelegram = window.Telegram?.WebApp !== undefined || !!tgWebAppData;
-
-  showDebug(`TG=${!!window.Telegram} | hash_tg=${!!tgWebAppData} | isTG=${isTelegram} | LIFF_ID=${!!window.__LIFF_ID__}`);
 
   if (isTelegram) {
     const tg = window.Telegram?.WebApp;
