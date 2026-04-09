@@ -8,6 +8,16 @@
 
 let _session = null;
 
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
 export async function initPlatform() {
   if (_session) return _session;
 
@@ -28,14 +38,15 @@ export async function initPlatform() {
   }
 
   // ── LINE LIFF ─────────────────────────────────────────────────
-  // Never run LIFF inside a Telegram WebView (window.Telegram is injected by Telegram)
-  const liffId = window.__LIFF_ID__ ?? import.meta.env?.VITE_LIFF_ID;
-  if (typeof liff !== "undefined" && liffId && !window.Telegram) {
+  // Only attempt LIFF when not in Telegram and a LIFF ID is configured.
+  // Load the SDK dynamically so it never runs in Telegram WebView.
+  const liffId = window.__LIFF_ID__;
+  if (liffId && !window.Telegram) {
     try {
+      await loadScript("https://static.line-scdn.net/liff/edge/2/sdk.js");
       await liff.init({ liffId });
       if (!liff.isLoggedIn()) {
         liff.login();
-        // login() redirects, so we block here
         await new Promise(() => {});
       }
       const profile = await liff.getProfile();
