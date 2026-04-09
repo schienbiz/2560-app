@@ -21,34 +21,40 @@ chartRouter.get("/chart/:symbol", async c => {
   const symbol = c.req.param("symbol").toUpperCase()
   const days   = Math.min(parseInt(c.req.query("days") ?? "90", 10), 365)
 
-  const { adapter, normalizedSymbol } = getAdapter(symbol)
-  const assetType = adapter.getAssetType()
+  try {
+    const { adapter, normalizedSymbol } = getAdapter(symbol)
+    const assetType = adapter.getAssetType()
 
-  // Try cache first
-  let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, days)
+    // Try cache first
+    let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, days)
 
-  if (!ohlcv) {
-    ohlcv = await adapter.fetchOHLCV(normalizedSymbol, days)
-    await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})  // non-blocking
+    if (!ohlcv) {
+      ohlcv = await adapter.fetchOHLCV(normalizedSymbol, days)
+      await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})  // non-blocking
+    }
+
+    const closes = ohlcv.map(b => b.close)
+    const ma25   = computeMA(closes, 25)
+    const ma60   = computeMA(closes, 60)
+    const result = analyzeSymbol(ohlcv)
+
+    const data: ChartData = {
+      symbol:      normalizedSymbol,
+      asset_type:  assetType,
+      ohlcv,
+      ma25,
+      ma60,
+      signal:      result.signal,
+      confidence:  result.confidence,
+      signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
+    }
+
+    return c.json(data)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error(`[chart] ${symbol}:`, message)
+    return c.json({ error: message }, 500)
   }
-
-  const closes = ohlcv.map(b => b.close)
-  const ma25   = computeMA(closes, 25)
-  const ma60   = computeMA(closes, 60)
-  const result = analyzeSymbol(ohlcv)
-
-  const data: ChartData = {
-    symbol:      normalizedSymbol,
-    asset_type:  assetType,
-    ohlcv,
-    ma25,
-    ma60,
-    signal:      result.signal,
-    confidence:  result.confidence,
-    signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
-  }
-
-  return c.json(data)
 })
 
 chartRouter.get("/signal/:symbol", async c => {
