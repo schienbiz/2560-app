@@ -18,4 +18,6 @@ export interface ChartData {
   signal:     import("./signal.js").SignalType
   confidence: import("./signal.js").Confidence
   signal_date: string | null
+  support:     number[]
+  resistance:  number[]
 }

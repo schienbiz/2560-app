@@ -4,6 +4,7 @@ import { chartRouter }     from "./routes/chart.js"
 import { watchlistRouter } from "./routes/watchlist.js"
 import { tradesRouter }    from "./routes/trades.js"
 import { remindersRouter } from "./routes/reminders.js"
+import { scanRouter }      from "./routes/scan.js"
 
 const app = new Hono()
 
@@ -12,6 +13,7 @@ app.route("/api",           chartRouter)
 app.route("/api/watchlist", watchlistRouter)
 app.route("/api/trades",    tradesRouter)
 app.route("/api/reminders", remindersRouter)
+app.route("/api/scan",      scanRouter)
 
 // ─── Internal cron endpoints (guarded by INTERNAL_SECRET header) ─────────────
 app.post("/internal/scan", async c => {

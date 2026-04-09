@@ -178,6 +178,34 @@ function buildChart(el, data) {
     ma60Series.setData(ma60Data);
   }
 
+  // Support lines (green dashed)
+  if (data.support?.length) {
+    for (const level of data.support) {
+      candles.createPriceLine({
+        price: level,
+        color: "rgba(0,200,83,0.6)",
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title: "S",
+      })
+    }
+  }
+
+  // Resistance lines (red dashed)
+  if (data.resistance?.length) {
+    for (const level of data.resistance) {
+      candles.createPriceLine({
+        price: level,
+        color: "rgba(255,23,68,0.6)",
+        lineWidth: 1,
+        lineStyle: 2, // dashed
+        axisLabelVisible: true,
+        title: "R",
+      })
+    }
+  }
+
   chart.timeScale().fitContent();
 
   // Resize observer for responsive width

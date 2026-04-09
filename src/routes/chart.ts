@@ -13,6 +13,7 @@ import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { computeMA, analyzeSymbol } from "../engine/index.js"
+import { computeSR } from "../engine/sr.js"
 import type { ChartData } from "../engine/types.js"
 
 export const chartRouter = new Hono()
@@ -38,6 +39,8 @@ chartRouter.get("/chart/:symbol", async c => {
     const ma60   = computeMA(closes, 60)
     const result = analyzeSymbol(ohlcv)
 
+    const sr = computeSR(ohlcv)
+
     const data: ChartData = {
       symbol:      normalizedSymbol,
       asset_type:  assetType,
@@ -47,6 +50,8 @@ chartRouter.get("/chart/:symbol", async c => {
       signal:      result.signal,
       confidence:  result.confidence,
       signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
+      support:     sr.support,
+      resistance:  sr.resistance,
     }
 
     return c.json(data)
