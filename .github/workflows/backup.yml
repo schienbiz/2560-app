@@ -1,0 +1,21 @@
+name: Daily database backup
+
+on:
+  schedule:
+    - cron: "0 18 * * *"   # 2:00am Taipei (UTC+8)
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backup to artifact
+        run: |
+          pg_dump "${{ secrets.DATABASE_URL }}" | gzip > backup-$(date +%Y%m%d).sql.gz
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: "*.sql.gz"
+          retention-days: 90

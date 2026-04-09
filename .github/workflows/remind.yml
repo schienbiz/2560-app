@@ -1,0 +1,15 @@
+name: Daily reminders
+
+on:
+  schedule:
+    - cron: "0 1 * * *"   # 9:00am Taipei (UTC+8) every day
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send reminders
+        run: |
+          curl -f -X POST "${{ secrets.APP_URL }}/internal/remind" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

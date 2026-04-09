@@ -1,0 +1,15 @@
+name: Daily signal scan
+
+on:
+  schedule:
+    - cron: "30 8 * * 1-5"   # 4:30pm Taipei (UTC+8) on weekdays
+  workflow_dispatch:           # manual trigger for testing
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scan
+        run: |
+          curl -f -X POST "${{ secrets.APP_URL }}/internal/scan" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

@@ -1,0 +1,13 @@
+name: Neon keep-alive
+
+on:
+  schedule:
+    - cron: "0 0 */3 * *"   # every 3 days
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping database
+        run: psql "${{ secrets.DATABASE_URL }}" -c "SELECT 1"

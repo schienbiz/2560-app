@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  line
+  telegram
+}
+
+enum AssetType {
+  stock
+  crypto
+}
+
+enum SignalType {
+  golden_cross
+  death_cross
+  none
+}
+
+enum TradeDirection {
+  long
+  short
+}
+
+// ─── Watchlist ────────────────────────────────────────────────────────────────
+model Watchlist {
+  id         String    @id @default(cuid())
+  user_id    String
+  platform   Platform
+  symbol     String
+  asset_type AssetType
+  label      String?
+
+  alert      WatchlistAlert?
+  trades     TradeRecord[]
+
+  created_at DateTime @default(now())
+
+  @@unique([user_id, platform, symbol])
+}
+
+// ─── Signal alert settings per watchlist item ────────────────────────────────
+model WatchlistAlert {
+  id           String    @id @default(cuid())
+  watchlist_id String    @unique
+  watchlist    Watchlist @relation(fields: [watchlist_id], references: [id], onDelete: Cascade)
+
+  on_golden    Boolean   @default(true)
+  on_death     Boolean   @default(true)
+  active       Boolean   @default(true)
+}
+
+// ─── Manual "remind me to check this symbol on date X" ───────────────────────
+model RemindMe {
+  id          String    @id @default(cuid())
+  user_id     String
+  platform    Platform
+  symbol      String
+  asset_type  AssetType
+  remind_date DateTime  @db.Date
+  note        String?
+  sent        Boolean   @default(false)
+  created_at  DateTime  @default(now())
+
+  @@index([remind_date, sent])
+}
+
+// ─── Global signal history (not per-user) ────────────────────────────────────
+model SignalHistory {
+  id          String     @id @default(cuid())
+  symbol      String
+  asset_type  AssetType
+  signal      SignalType
+  signal_date DateTime
+  close_price Float
+  ma25        Float
+  ma60        Float
+  confidence  String     // "high" | "medium" | "low"
+  created_at  DateTime   @default(now())
+
+  trades      TradeRecord[]
+
+  @@unique([symbol, signal_date, signal])
+  @@index([symbol, signal_date])
+}
+
+// ─── Trade records ───────────────────────────────────────────────────────────
+model TradeRecord {
+  id           String         @id @default(cuid())
+  user_id      String
+  platform     Platform
+  symbol       String
+  asset_type   AssetType
+
+  watchlist_id String?
+  watchlist    Watchlist?     @relation(fields: [watchlist_id], references: [id])
+
+  signal_id    String?
+  signal       SignalHistory? @relation(fields: [signal_id], references: [id])
+
+  direction    TradeDirection @default(long)
+
+  entry_date   DateTime
+  entry_price  Float
+  exit_date    DateTime?
+  exit_price   Float?
+  quantity     Float?
+  notes        String?
+
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@index([user_id, platform])
+}
+
+// ─── OHLCV cache (reduces external API calls) ────────────────────────────────
+model OhlcvCache {
+  symbol     String
+  date       DateTime @db.Date
+  open       Float
+  high       Float
+  low        Float
+  close      Float
+  volume     Float
+  source     String   // "yahoo" | "binance"
+  fetched_at DateTime @default(now())
+
+  @@unique([symbol, date])
+  @@index([symbol, date])
+}
