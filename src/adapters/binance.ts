@@ -1,32 +1,43 @@
 /**
- * Crypto OHLCV adapter using CryptoCompare public API.
+ * Crypto OHLCV adapter using Kraken public REST API.
  *
  * DATA FLOW:
  *   fetchOHLCV("BTCUSDT", 90)
- *     → splits "BTCUSDT" → fsym=BTC, tsym=USDT
- *     → GET https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USDT&limit=90
- *     → { Data: { Data: [ { time, open, high, low, close, volumefrom } ] } }
+ *     → maps "BTCUSDT" → Kraken pair "XBTUSD"
+ *     → GET https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1440
+ *     → { result: { XXBTZUSD: [ [time, open, high, low, close, vwap, volume, count] ] } }
  *     → normalize to OHLCV[]
  *
- * No API key required for free tier (100k calls/month).
+ * No API key required. No rate limit for public endpoints.
  */
 
 import type { MarketAdapter } from "./interface.js"
 import type { OHLCV } from "../engine/types.js"
 
-const BASE = "https://min-api.cryptocompare.com/data/v2"
+const BASE = "https://api.kraken.com/0/public"
 
-// Split "BTCUSDT" → { fsym: "BTC", tsym: "USDT" }
-// Handles USDT, BTC, ETH, USDC quote currencies
-function splitPair(symbol: string): { fsym: string; tsym: string } {
+// Map common USDT/USD pairs to Kraken pair names
+// Kraken uses XBT for Bitcoin and USD instead of USDT
+const PAIR_MAP: Record<string, string> = {
+  BTCUSDT:  "XBTUSD",
+  BTCUSD:   "XBTUSD",
+  ETHUSDT:  "ETHUSD",
+  ETHUSD:   "ETHUSD",
+  SOLUSDT:  "SOLUSD",
+  XRPUSDT:  "XRPUSD",
+  DOGEUSDT: "DOGEUSD",
+  BNBUSDT:  "BNBUSD",
+  ADAUSDT:  "ADAUSD",
+  AVAXUSDT: "AVAXUSD",
+  DOTUSDT:  "DOTUSD",
+  MATICUSDT:"MATICUSD",
+  LINKUSDT: "LINKUSD",
+  LTCUSDT:  "LTCUSD",
+}
+
+function toKrakenPair(symbol: string): string {
   const upper = symbol.toUpperCase()
-  for (const quote of ["USDT", "USDC", "BTC", "ETH", "BNB"]) {
-    if (upper.endsWith(quote)) {
-      return { fsym: upper.slice(0, -quote.length), tsym: quote }
-    }
-  }
-  // Fallback: assume last 4 chars are quote
-  return { fsym: upper.slice(0, -4), tsym: upper.slice(-4) }
+  return PAIR_MAP[upper] ?? upper
 }
 
 export class BinanceAdapter implements MarketAdapter {
@@ -37,38 +48,40 @@ export class BinanceAdapter implements MarketAdapter {
   }
 
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {
-    const { fsym, tsym } = splitPair(symbol)
-    const limit = Math.min(days, 2000)
-    const url = `${BASE}/histoday?fsym=${fsym}&tsym=${tsym}&limit=${limit}`
+    const pair = toKrakenPair(symbol)
+    // interval=1440 = daily candles; since = unix timestamp for 'days' ago
+    const since = Math.floor(Date.now() / 1000) - days * 86400
+    const url = `${BASE}/OHLC?pair=${pair}&interval=1440&since=${since}`
 
     const res = await fetch(url)
-    if (!res.ok) throw new Error(`CryptoCompare fetch failed: ${res.status} ${symbol}`)
+    if (!res.ok) throw new Error(`Kraken fetch failed: ${res.status} ${symbol}`)
 
-    const json = await res.json() as CryptoCompareResponse
-    if (json.Response !== "Success") throw new Error(`CryptoCompare error: ${json.Message ?? symbol}`)
+    const json = await res.json() as KrakenResponse
+    if (json.error?.length) throw new Error(`Kraken error: ${json.error.join(", ")}`)
 
-    return json.Data.Data.map(k => ({
-      date:   new Date(k.time * 1000).toISOString().slice(0, 10),
-      open:   k.open,
-      high:   k.high,
-      low:    k.low,
-      close:  k.close,
-      volume: k.volumefrom,
-    })).filter(b => b.close > 0)
+    // Result has one key (the pair name), ignore the "last" key
+    const resultKey = Object.keys(json.result).find(k => k !== "last")
+    if (!resultKey) throw new Error(`No data for symbol: ${symbol}`)
+
+    const rows = json.result[resultKey] as KrakenOHLCRow[]
+    return rows
+      .map(k => ({
+        date:   new Date(k[0] * 1000).toISOString().slice(0, 10),
+        open:   parseFloat(k[1]),
+        high:   parseFloat(k[2]),
+        low:    parseFloat(k[3]),
+        close:  parseFloat(k[4]),
+        volume: parseFloat(k[6]),
+      }))
+      .filter(b => b.close > 0)
+      .slice(-days)
   }
 }
 
-interface CryptoCompareResponse {
-  Response: string
-  Message?: string
-  Data: {
-    Data: Array<{
-      time:       number
-      open:       number
-      high:       number
-      low:        number
-      close:      number
-      volumefrom: number
-    }>
-  }
+// [time, open, high, low, close, vwap, volume, count]
+type KrakenOHLCRow = [number, string, string, string, string, string, string, number]
+
+interface KrakenResponse {
+  error: string[]
+  result: Record<string, KrakenOHLCRow[] | number>
 }
