@@ -30,6 +30,14 @@ app.post("/internal/remind", async c => {
   return c.json({ ok: true })
 })
 
+// ─── Frontend config (injects env vars as JS globals) ────────────────────────
+app.get("/config.js", c => {
+  const liffId = process.env.LIFF_ID ?? ""
+  c.header("Content-Type", "application/javascript")
+  c.header("Cache-Control", "no-cache")
+  return c.body(`window.__LIFF_ID__ = "${liffId}";`)
+})
+
 // ─── Static frontend ─────────────────────────────────────────────────────────
 app.use("/*", serveStatic({ root: "./public" }))
 
