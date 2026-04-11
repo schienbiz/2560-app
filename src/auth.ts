@@ -64,7 +64,7 @@ function verifyTelegram(initData: string): string | null {
     if (expected !== hash) return null
 
     const authDate = parseInt(params.get("auth_date") ?? "0", 10)
-    if (!authDate || Math.floor(Date.now() / 1000) - authDate > 5 * 60) return null
+    if (!authDate || Math.floor(Date.now() / 1000) - authDate > 24 * 60 * 60) return null
 
     const user = JSON.parse(params.get("user") ?? "{}") as { id?: number }
     return user.id ? String(user.id) : null

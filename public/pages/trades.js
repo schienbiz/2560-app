@@ -10,6 +10,12 @@
 import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet } from "../app.js";
 
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 export async function renderTrades(container) {
   container.innerHTML = `
     <h2>交易紀錄</h2>
@@ -91,7 +97,7 @@ function renderOpenRow(t) {
       <div class="row text-sm" style="margin-top:4px">
         <span class="text-muted">進場價格</span><span>${fmt(t.entry_price)}</span>
       </div>
-      ${t.notes ? `<div class="text-sm text-muted" style="margin-top:6px">${t.notes}</div>` : ""}
+      ${t.notes ? `<div class="text-sm text-muted" style="margin-top:6px">${esc(t.notes)}</div>` : ""}
     </div>
   `;
 }
@@ -128,7 +134,7 @@ function renderClosedRow(t) {
         <span class="text-muted">出場</span>
         <span>${isoToDate(t.exit_date)} @ ${fmt(t.exit_price)}</span>
       </div>
-      ${t.notes ? `<div class="text-sm text-muted" style="margin-top:6px">${t.notes}</div>` : ""}
+      ${t.notes ? `<div class="text-sm text-muted" style="margin-top:6px">${esc(t.notes)}</div>` : ""}
     </div>
   `;
 }

@@ -10,6 +10,12 @@
 import { api } from "../api.js";
 import { showToast, openSheet, closeSheet } from "../app.js";
 
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 export async function renderReminders(container) {
   container.innerHTML = `
     <div class="row" style="margin-bottom:16px">
@@ -39,12 +45,14 @@ async function loadReminders(container) {
 
     listEl.querySelectorAll(".rem-delete-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
+        btn.disabled = true;
         try {
           await api.delete(`/api/reminders/${btn.dataset.id}`);
           showToast("已刪除");
           await loadReminders(container);
         } catch {
           showToast("刪除失敗");
+          btn.disabled = false;
         }
       });
     });
@@ -69,7 +77,7 @@ function renderRow(r, today) {
         </div>
         <button class="btn danger rem-delete-btn" data-id="${r.id}" style="padding:4px 10px;font-size:11px">刪除</button>
       </div>
-      ${r.note ? `<div class="text-sm text-muted" style="margin-top:6px">${r.note}</div>` : ""}
+      ${r.note ? `<div class="text-sm text-muted" style="margin-top:6px">${esc(r.note)}</div>` : ""}
     </div>
   `;
 }

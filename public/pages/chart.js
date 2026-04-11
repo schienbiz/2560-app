@@ -264,6 +264,9 @@ function openAddTradeSheet(symbol, data) {
       return;
     }
 
+    const btn = document.getElementById("trade-confirm-btn");
+    btn.disabled = true;
+    btn.textContent = "記錄中…";
     try {
       await api.post("/api/trades", {
         symbol,
@@ -277,6 +280,8 @@ function openAddTradeSheet(symbol, data) {
       showToast("已記錄交易");
     } catch {
       showToast("記錄失敗，請稍後再試");
+      btn.disabled = false;
+      btn.textContent = "確認記錄";
     }
   });
 }
@@ -303,6 +308,9 @@ function openAddReminderSheet(symbol) {
 
     if (!date) { showToast("請選擇日期"); return; }
 
+    const btn = document.getElementById("remind-confirm-btn");
+    btn.disabled = true;
+    btn.textContent = "設定中…";
     try {
       await api.post("/api/reminders", {
         symbol,
@@ -313,6 +321,8 @@ function openAddReminderSheet(symbol) {
       showToast("提醒已設定");
     } catch {
       showToast("設定失敗，請稍後再試");
+      btn.disabled = false;
+      btn.textContent = "確認設定";
     }
   });
 }

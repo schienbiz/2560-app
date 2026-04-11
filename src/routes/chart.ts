@@ -66,22 +66,28 @@ chartRouter.get("/chart/:symbol", async c => {
 
 chartRouter.get("/signal/:symbol", async c => {
   const symbol = c.req.param("symbol").toUpperCase()
-  const { adapter, normalizedSymbol } = getAdapter(symbol)
-  const assetType = adapter.getAssetType()
+  try {
+    const { adapter, normalizedSymbol } = getAdapter(symbol)
+    const assetType = adapter.getAssetType()
 
-  let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 90)
-  if (!ohlcv) {
-    ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 90)
-    await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
+    let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 90)
+    if (!ohlcv) {
+      ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 90)
+      await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
+    }
+
+    const result = analyzeSymbol(ohlcv)
+    return c.json({
+      symbol:      normalizedSymbol,
+      signal:      result.signal,
+      confidence:  result.confidence,
+      signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
+      ma25:        result.ma25,
+      ma60:        result.ma60,
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const isNotFound = message.includes("404") || message.toLowerCase().includes("no data for symbol")
+    return c.json({ error: message }, isNotFound ? 404 : 500)
   }
-
-  const result = analyzeSymbol(ohlcv)
-  return c.json({
-    symbol:      normalizedSymbol,
-    signal:      result.signal,
-    confidence:  result.confidence,
-    signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
-    ma25:        result.ma25,
-    ma60:        result.ma60,
-  })
 })

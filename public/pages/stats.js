@@ -109,7 +109,7 @@ function pct(n) {
 
 function winColor(rate) {
   if (rate == null) return "var(--text)";
-  return rate >= 0.5 ? "var(--green)" : "var(--red)";
+  return rate >= 50 ? "var(--green)" : "var(--red)";
 }
 
 function returnColor(avg) {

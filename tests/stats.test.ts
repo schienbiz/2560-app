@@ -47,14 +47,14 @@ describe("computeStats", () => {
     ]
     const result = computeStats(trades)
     expect(result.total.closed).toBe(0)
-    expect(Number.isNaN(result.total.winRate)).toBe(true)
-    expect(Number.isNaN(result.total.avgReturn)).toBe(true)
+    expect(result.total.winRate).toBeNull()
+    expect(result.total.avgReturn).toBeNull()
   })
 
   it("handles empty trades array", () => {
     const result = computeStats([])
     expect(result.total.count).toBe(0)
-    expect(Number.isNaN(result.total.winRate)).toBe(true)
+    expect(result.total.winRate).toBeNull()
   })
 
   it("tracks max win and max loss", () => {
