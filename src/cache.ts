@@ -53,12 +53,11 @@ export async function upsertOHLCV(
   source: string,
   bars: OHLCV[]
 ): Promise<void> {
-  // Upsert in batches to avoid oversized queries
-  for (const b of bars) {
-    await db.ohlcvCache.upsert({
+  await Promise.all(bars.map(b =>
+    db.ohlcvCache.upsert({
       where: { symbol_date: { symbol, date: new Date(b.date) } },
       create: { symbol, source, date: new Date(b.date), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume },
       update: { open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume, fetched_at: new Date() },
     })
-  }
+  ))
 }

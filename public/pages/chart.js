@@ -9,6 +9,7 @@ import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet, navigate } from "../app.js";
 
 let chartInstance = null;
+let chartResizeObserver = null;
 let currentSymbol = null;
 
 export async function renderChart(container, params = {}) {
@@ -68,7 +69,11 @@ async function loadChart(rawSymbol) {
   bannerEl.innerHTML      = "";
   chartEl.innerHTML       = "";
 
-  // Destroy previous chart instance to avoid memory leaks
+  // Destroy previous chart instance and observer to avoid memory leaks
+  if (chartResizeObserver) {
+    chartResizeObserver.disconnect();
+    chartResizeObserver = null;
+  }
   if (chartInstance) {
     try { chartInstance.remove(); } catch (_) {}
     chartInstance = null;
@@ -208,11 +213,11 @@ function buildChart(el, data) {
 
   chart.timeScale().fitContent();
 
-  // Resize observer for responsive width
-  const ro = new ResizeObserver(() => {
+  // Resize observer for responsive width — tracked so caller can disconnect it
+  chartResizeObserver = new ResizeObserver(() => {
     chart.applyOptions({ width: el.offsetWidth });
   });
-  ro.observe(el);
+  chartResizeObserver.observe(el);
 }
 
 function openAddTradeSheet(symbol, data) {

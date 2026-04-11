@@ -102,6 +102,9 @@ function openAddSheet(container) {
     if (!symbol) { showToast("請輸入標的代碼"); return; }
     if (!date) { showToast("請選擇日期"); return; }
 
+    const btn = document.getElementById("rem-confirm-btn");
+    btn.disabled = true;
+    btn.textContent = "新增中…";
     try {
       await api.post("/api/reminders", { symbol, remind_date: date, note });
       closeSheet();
@@ -109,6 +112,8 @@ function openAddSheet(container) {
       await loadReminders(container);
     } catch {
       showToast("新增失敗，請稍後再試");
+      btn.disabled = false;
+      btn.textContent = "確認新增";
     }
   });
 }

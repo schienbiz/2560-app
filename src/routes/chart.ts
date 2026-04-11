@@ -31,6 +31,7 @@ chartRouter.get("/chart/:symbol", async c => {
 
     if (!ohlcv) {
       ohlcv = await adapter.fetchOHLCV(normalizedSymbol, days)
+      if (ohlcv.length === 0) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 404)
       await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})  // non-blocking
     }
 

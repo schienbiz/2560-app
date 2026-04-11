@@ -17,7 +17,7 @@ const yahoo   = new YahooFinanceAdapter()
 export function getAdapter(symbol: string): { adapter: MarketAdapter; normalizedSymbol: string } {
   const upper = symbol.toUpperCase().trim()
 
-  if (upper.endsWith("USDT") || /^(BTC|ETH|BNB|SOL|XRP|DOGE)/.test(upper)) {
+  if (upper.endsWith("USDT") || /^(BTC|ETH|BNB|SOL|XRP|DOGE|ADA|AVAX|DOT|MATIC|LINK|LTC)/.test(upper)) {
     return { adapter: binance, normalizedSymbol: upper }
   }
 

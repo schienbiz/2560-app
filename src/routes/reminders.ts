@@ -16,7 +16,6 @@ remindersRouter.get("/", async c => {
       user_id:  userId,
       platform,
       sent:     false,
-      remind_date: { gte: new Date() },
     },
     orderBy: { remind_date: "asc" },
   })

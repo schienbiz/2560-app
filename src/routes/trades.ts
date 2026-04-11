@@ -31,6 +31,7 @@ tradesRouter.get("/stats", async c => {
   const mapped: TradeLike[] = trades.map(t => ({
     entry_price:  t.entry_price,
     exit_price:   t.exit_price,
+    direction:    t.direction as "long" | "short",
     signal_type:  (t.signal?.signal ?? null) as SignalType | null,
   }))
 
@@ -96,7 +97,7 @@ tradesRouter.put("/:id", zValidator("json", updateSchema), async c => {
     data: {
       exit_date:  body.exit_date  ? new Date(body.exit_date) : existing.exit_date,
       exit_price: body.exit_price ?? existing.exit_price,
-      notes:      body.notes      ?? existing.notes,
+      notes:      body.notes !== undefined ? body.notes : existing.notes,
     },
   })
   return c.json(updated)

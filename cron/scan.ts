@@ -10,7 +10,8 @@
 
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
-import { computeMA, detectCross } from "../src/engine/index.js"
+import { computeMA, scoreSignal } from "../src/engine/index.js"
+import { getCachedOHLCV, upsertOHLCV } from "../src/cache.js"
 import { pushLine, pushTelegram } from "./notify.js"
 
 export async function runScan() {
@@ -25,11 +26,20 @@ export async function runScan() {
     const { watchlist } = alert
     try {
       const { adapter, normalizedSymbol } = getAdapter(watchlist.symbol)
-      const ohlcv  = await adapter.fetchOHLCV(normalizedSymbol, 90)
+
+      // Try cache first; fall back to live fetch and repopulate cache
+      let ohlcv = await getCachedOHLCV(normalizedSymbol, watchlist.asset_type, 90)
+      if (!ohlcv) {
+        ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 90)
+        await upsertOHLCV(normalizedSymbol, watchlist.asset_type, ohlcv)
+      }
+
       const closes = ohlcv.map(b => b.close)
       const ma25   = computeMA(closes, 25)
       const ma60   = computeMA(closes, 60)
-      const { type: signal } = detectCross(ma25, ma60)
+
+      // scoreSignal with lookback=1: only fire if cross happened at the last bar
+      const { signal, confidence } = scoreSignal(ohlcv, ma25, ma60, 1)
 
       if (signal === "none") continue
       if (signal === "golden_cross" && !alert.on_golden) continue
@@ -38,7 +48,8 @@ export async function runScan() {
       const latest = ohlcv[ohlcv.length - 1]
       const emoji  = signal === "golden_cross" ? "🟢" : "🔴"
       const label  = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
-      const msg    = `${emoji} ${watchlist.label ?? watchlist.symbol} ${label}\n收盤 ${latest.close}  日期 ${latest.date}`
+      const confLabel = confidence === "high" ? " 高信心度" : ""
+      const msg    = `${emoji} ${watchlist.label ?? watchlist.symbol} ${label}${confLabel}\n收盤 ${latest.close}  日期 ${latest.date}`
 
       if (watchlist.platform === "line") {
         await pushLine(watchlist.user_id, msg)
@@ -55,9 +66,9 @@ export async function runScan() {
           signal,
           signal_date: new Date(latest.date),
           close_price: latest.close,
-          ma25:        ma25[ma25.length - 1] ?? 0,
-          ma60:        ma60[ma60.length - 1] ?? 0,
-          confidence:  "medium",  // cron scan doesn't compute full confidence
+          ma25:        (ma25[ma25.length - 1] ?? 0) as number,
+          ma60:        (ma60[ma60.length - 1] ?? 0) as number,
+          confidence,
         },
         update: {},
       })

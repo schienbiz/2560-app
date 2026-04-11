@@ -7,9 +7,10 @@ import { db } from "../src/db.js"
 import { pushLine, pushTelegram } from "./notify.js"
 
 export async function runRemind() {
-  const today = new Date()
-  today.setUTCHours(0, 0, 0, 0)
-  const tomorrow = new Date(today)
+  // Use Taipei date as the boundary so reminders fire on the correct Taiwan day
+  const taipeiDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" })
+  const today = new Date(taipeiDateStr)       // UTC midnight of today's Taipei date
+  const tomorrow = new Date(taipeiDateStr)
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
 
   const due = await db.remindMe.findMany({

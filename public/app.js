@@ -71,7 +71,7 @@ async function switchTab(name, params) {
 
   // For other pages, lazy render: only re-render if not yet rendered.
   // Exception: trades and stats always refresh (data changes frequently).
-  const alwaysRefresh = ["trades", "stats", "reminders"];
+  const alwaysRefresh = ["watchlist", "trades", "stats", "reminders"];
   if (!rendered[name] || alwaysRefresh.includes(name)) {
     await safeRender(name, container, params);
   }

@@ -36,8 +36,18 @@ export async function initPlatform() {
 
     // initData from window.Telegram.WebApp or from URL hash
     const initData = tg?.initData || tgWebAppData || "";
-    const user = tg?.initDataUnsafe?.user;
-    const userId = user?.id ? String(user.id) : hashParams.get("tgWebAppUserId") ?? "tg-user";
+
+    // Extract user ID: prefer WebApp object, fall back to parsing initData (iOS fallback)
+    let userId = "tg-user";
+    if (tg?.initDataUnsafe?.user?.id) {
+      userId = String(tg.initDataUnsafe.user.id);
+    } else if (initData) {
+      try {
+        const parsed = new URLSearchParams(initData);
+        const userObj = JSON.parse(parsed.get("user") ?? "{}");
+        if (userObj.id) userId = String(userObj.id);
+      } catch (_) {}
+    }
 
     _session = {
       platform: "telegram",

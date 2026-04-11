@@ -195,6 +195,9 @@ function openAddSheet() {
     const symbol = input.value.trim().toUpperCase();
     if (!symbol) { showToast("請輸入代碼"); return; }
 
+    const btn = document.getElementById("add-symbol-confirm");
+    btn.disabled = true;
+    btn.textContent = "新增中…";
     try {
       await api.post("/api/watchlist", { symbol });
       closeSheet();
@@ -207,6 +210,8 @@ function openAddSheet() {
       } else {
         showToast("新增失敗，請確認代碼");
       }
+      btn.disabled = false;
+      btn.textContent = "確認新增";
     }
   });
 

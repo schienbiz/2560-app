@@ -18,7 +18,9 @@ app.route("/api/scan",      scanRouter)
 // ─── Internal cron endpoints (guarded by INTERNAL_SECRET header) ─────────────
 app.post("/internal/scan", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (secret !== process.env.INTERNAL_SECRET) return c.json({ error: "Forbidden" }, 403)
+  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+    return c.json({ error: "Forbidden" }, 403)
+  }
   const { runScan } = await import("../cron/scan.js")
   await runScan()
   return c.json({ ok: true })
@@ -26,7 +28,9 @@ app.post("/internal/scan", async c => {
 
 app.post("/internal/remind", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (secret !== process.env.INTERNAL_SECRET) return c.json({ error: "Forbidden" }, 403)
+  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+    return c.json({ error: "Forbidden" }, 403)
+  }
   const { runRemind } = await import("../cron/remind.js")
   await runRemind()
   return c.json({ ok: true })
@@ -37,7 +41,7 @@ app.get("/config.js", c => {
   const liffId = process.env.LIFF_ID ?? ""
   c.header("Content-Type", "application/javascript")
   c.header("Cache-Control", "no-cache")
-  return c.body(`window.__LIFF_ID__ = "${liffId}";`)
+  return c.body(`window.__LIFF_ID__ = ${JSON.stringify(liffId)};`)
 })
 
 // ─── Static frontend ─────────────────────────────────────────────────────────

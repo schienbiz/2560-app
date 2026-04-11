@@ -98,7 +98,8 @@ function renderOpenRow(t) {
 
 function renderClosedRow(t) {
   const pnlPct = calcPnl(t);
-  const isWin  = pnlPct !== null && (t.direction === "long" ? pnlPct >= 0 : pnlPct <= 0);
+  // calcPnl already flips the sign for shorts, so positive = profit for all directions
+  const isWin  = pnlPct !== null && pnlPct >= 0;
   const pnlEl  = pnlPct !== null
     ? `<span class="${isWin ? "text-green" : "text-red"}" style="font-weight:700;font-size:15px">${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(2)}%</span>`
     : "";
@@ -198,6 +199,9 @@ function openExitSheet(trade, container) {
       return;
     }
 
+    const btn = document.getElementById("exit-confirm-btn");
+    btn.disabled = true;
+    btn.textContent = "結清中…";
     try {
       await api.put(`/api/trades/${trade.id}`, {
         exit_date:  exitDate,
@@ -209,6 +213,8 @@ function openExitSheet(trade, container) {
       await loadTrades(container);
     } catch {
       showToast("更新失敗，請稍後再試");
+      btn.disabled = false;
+      btn.textContent = "確認結清";
     }
   });
 }

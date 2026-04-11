@@ -51,9 +51,13 @@ watchlistRouter.post("/", zValidator("json", addSchema), async c => {
   const valid = await adapter.validateSymbol(normalizedSymbol)
   if (!valid) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 422)
 
-  const item = await db.watchlist.upsert({
-    where: { user_id_platform_symbol: { user_id: userId, platform, symbol: normalizedSymbol } },
-    create: {
+  const existing = await db.watchlist.findFirst({
+    where: { user_id: userId, platform, symbol: normalizedSymbol },
+  })
+  if (existing) return c.json({ error: "Already in watchlist" }, 409)
+
+  const item = await db.watchlist.create({
+    data: {
       user_id:    userId,
       platform,
       symbol:     normalizedSymbol,
@@ -61,7 +65,6 @@ watchlistRouter.post("/", zValidator("json", addSchema), async c => {
       label,
       alert: { create: { on_golden: true, on_death: true, active: true } },
     },
-    update: { label },
     include: { alert: true },
   })
   return c.json(item, 201)
