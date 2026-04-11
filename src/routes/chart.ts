@@ -59,7 +59,8 @@ chartRouter.get("/chart/:symbol", async c => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[chart] ${symbol}:`, message)
-    return c.json({ error: message }, 500)
+    const isNotFound = message.includes("404") || message.toLowerCase().includes("no data for symbol")
+    return c.json({ error: message }, isNotFound ? 404 : 500)
   }
 })
 
