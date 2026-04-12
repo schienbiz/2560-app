@@ -1,8 +1,8 @@
-name: Neon keep-alive
+name: Keep-alive (DB + app)
 
 on:
   schedule:
-    - cron: "0 0 */3 * *"   # every 3 days
+    - cron: "0 */14 * * *"   # every 14 hours — keeps Render warm and Neon from pausing
   workflow_dispatch:
 
 jobs:
@@ -14,3 +14,6 @@ jobs:
 
       - name: Ping database
         run: psql "${{ secrets.DATABASE_URL }}" -c "SELECT 1"
+
+      - name: Ping app
+        run: curl -sf "${{ secrets.APP_URL }}/config.js" > /dev/null
