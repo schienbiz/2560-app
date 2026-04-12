@@ -28,6 +28,10 @@ export async function renderReminders(container) {
   await loadReminders(container);
 }
 
+function taipeiToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+}
+
 async function loadReminders(container) {
   const listEl = container.querySelector("#rem-list");
   try {
@@ -38,7 +42,7 @@ async function loadReminders(container) {
     }
 
     // Backend already filters to upcoming reminders only
-    const today = new Date().toISOString().slice(0, 10);
+    const today = taipeiToday();
     let html = items.map((r) => renderRow(r, today)).join("");
 
     listEl.innerHTML = html;
@@ -72,7 +76,7 @@ function renderRow(r, today) {
     <div class="card">
       <div class="row">
         <div>
-          <span style="font-weight:700">${r.symbol || "—"}</span>
+          <span style="font-weight:700">${esc(r.symbol) || "—"}</span>
           <span style="font-size:12px;color:${dateColor};margin-left:8px">${dateLabel}</span>
         </div>
         <button class="btn danger rem-delete-btn" data-id="${r.id}" style="padding:4px 10px;font-size:11px">刪除</button>
@@ -83,7 +87,9 @@ function renderRow(r, today) {
 }
 
 function openAddSheet(container) {
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const d = new Date(new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" }));
+  d.setUTCDate(d.getUTCDate() + 1);
+  const tomorrow = d.toISOString().slice(0, 10);
 
   openSheet(`
     <h3>新增提醒</h3>

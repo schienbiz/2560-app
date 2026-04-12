@@ -24,9 +24,18 @@ declare module "hono" {
 
 // ─── LINE ────────────────────────────────────────────────────────────────────
 
+// Cache verified LINE tokens for 1 hour to avoid hitting LINE's API on every request.
+// Key: id_token  Value: { userId, expiresAt }
+const lineTokenCache = new Map<string, { userId: string; expiresAt: number }>()
+const LINE_TOKEN_TTL = 60 * 60 * 1000  // 1 hour
+
 async function verifyLine(token: string): Promise<string | null> {
   const channelId = process.env.LINE_CHANNEL_ID
   if (!channelId) return null
+
+  // Cache hit
+  const cached = lineTokenCache.get(token)
+  if (cached && Date.now() < cached.expiresAt) return cached.userId
 
   try {
     const res = await fetch("https://api.line.me/oauth2/v2.1/verify", {
@@ -36,7 +45,10 @@ async function verifyLine(token: string): Promise<string | null> {
     })
     if (!res.ok) return null
     const data = await res.json() as { sub?: string }
-    return data.sub ?? null
+    if (!data.sub) return null
+
+    lineTokenCache.set(token, { userId: data.sub, expiresAt: Date.now() + LINE_TOKEN_TTL })
+    return data.sub
   } catch {
     return null
   }

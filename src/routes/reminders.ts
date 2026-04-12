@@ -34,6 +34,8 @@ remindersRouter.post("/", zValidator("json", createSchema), async c => {
   const { symbol, remind_date, note } = c.req.valid("json")
 
   const { adapter, normalizedSymbol } = getAdapter(symbol)
+  const valid = await adapter.validateSymbol(normalizedSymbol)
+  if (!valid) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 422)
 
   const item = await db.remindMe.create({
     data: {

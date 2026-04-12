@@ -10,6 +10,12 @@
 import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet, navigate } from "../app.js";
 
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 export async function renderWatchlist(container) {
   container.innerHTML = `
     <div class="row" style="margin-bottom:16px">
@@ -79,7 +85,7 @@ function renderRow(item) {
     <div class="card wl-row" data-symbol="${item.symbol}" style="cursor:pointer">
       <div class="row">
         <div>
-          <div style="font-weight:700;font-size:16px">${item.symbol}</div>
+          <div style="font-weight:700;font-size:16px">${esc(item.symbol)}</div>
           ${sigDate}
         </div>
         <div style="display:flex;align-items:center;gap:8px">

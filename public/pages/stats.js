@@ -37,7 +37,7 @@ async function loadStats(container) {
         <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:10px">總覽</div>
         <div class="stat-grid">
           ${statCard("總交易次數", overall.count, "")}
-          ${statCard("勝率", pct(overall.winRate), "", winColor(overall.winRate))}
+          ${statCard("勝率", pct(overall.winRate, false), "", winColor(overall.winRate))}
           ${statCard("平均報酬", pct(overall.avgReturn), "", returnColor(overall.avgReturn))}
           ${statCard("最大獲利", pct(overall.maxWin), "", "var(--green)")}
         </div>
@@ -70,7 +70,7 @@ async function loadStats(container) {
           <div style="font-size:12px;color:${accent};font-weight:600;margin-bottom:10px">${groupLabel[key]}</div>
           <div class="stat-grid">
             ${statCard("交易次數", g.count, "")}
-            ${statCard("勝率", pct(g.winRate), "", winColor(g.winRate))}
+            ${statCard("勝率", pct(g.winRate, false), "", winColor(g.winRate))}
             ${statCard("平均報酬", pct(g.avgReturn), "", returnColor(g.avgReturn))}
             ${statCard("最大獲利", pct(g.maxWin), "", "var(--green)")}
           </div>
@@ -99,12 +99,12 @@ function statCard(label, value, unit, color = "var(--text)") {
   `;
 }
 
-function pct(n) {
-  // NaN serializes as null in JSON
+// For returns: show sign (±). For rates like win rate: no sign.
+function pct(n, signed = true) {
   if (n == null || Number.isNaN(n)) return "—";
   const v = Number(n);
   if (!isFinite(v)) return "—";
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
+  return `${signed && v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 }
 
 function winColor(rate) {

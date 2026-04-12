@@ -85,7 +85,7 @@ function renderOpenRow(t) {
     <div class="card trade-open-row" data-id="${t.id}" style="cursor:pointer">
       <div class="row">
         <div>
-          <span style="font-weight:700">${t.symbol}</span>
+          <span style="font-weight:700">${esc(t.symbol)}</span>
           <span class="badge ${dirColor}" style="margin-left:6px">${dirLabel}</span>
         </div>
         <span class="text-muted text-sm">持倉中 ›</span>
@@ -117,7 +117,7 @@ function renderClosedRow(t) {
     <div class="card">
       <div class="row">
         <div>
-          <span style="font-weight:700">${t.symbol}</span>
+          <span style="font-weight:700">${esc(t.symbol)}</span>
           <span class="badge ${dirColor}" style="margin-left:6px">${dirLabel}</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px">

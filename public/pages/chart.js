@@ -220,9 +220,13 @@ function buildChart(el, data) {
   chartResizeObserver.observe(el);
 }
 
+function taipeiToday() {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" });
+}
+
 function openAddTradeSheet(symbol, data) {
   const latestClose = data.ohlcv?.at(-1)?.close ?? "";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = taipeiToday();
 
   openSheet(`
     <h3>記錄交易 — ${symbol}</h3>
@@ -287,7 +291,9 @@ function openAddTradeSheet(symbol, data) {
 }
 
 function openAddReminderSheet(symbol) {
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const d = new Date(taipeiToday());
+  d.setUTCDate(d.getUTCDate() + 1);
+  const tomorrow = d.toISOString().slice(0, 10);
 
   openSheet(`
     <h3>設定提醒 — ${symbol}</h3>
