@@ -30,7 +30,8 @@ const lineTokenCache = new Map<string, { userId: string; expiresAt: number }>()
 const LINE_TOKEN_TTL = 60 * 60 * 1000  // 1 hour
 
 async function verifyLine(token: string): Promise<string | null> {
-  const channelId = process.env.LINE_CHANNEL_ID
+  // LINE_CHANNEL_ID is the numeric prefix of LIFF_ID (e.g. "2009750300-3ibNysMP" → "2009750300")
+  const channelId = process.env.LINE_CHANNEL_ID ?? process.env.LIFF_ID?.split("-")[0]
   if (!channelId) return null
 
   // Cache hit
