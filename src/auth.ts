@@ -85,35 +85,31 @@ function verifyTelegram(initData: string): string | null {
   }
 }
 
-// ─── Middleware ───────────────────────────────────────────────────────────────
+// ─── Shared resolver (used by HTTP middleware + WS handler) ──────────────────
 
-export async function authMiddleware(c: Context, next: Next) {
-  const authorization = c.req.header("Authorization") ?? ""
-
-  // Dev bypass — only in non-production environments.
-  // Uses platform "line" so the DB enum constraint is satisfied.
+export async function resolveAuth(authorization: string): Promise<AuthUser | null> {
   if (process.env.NODE_ENV !== "production" && authorization === "Bearer dev") {
-    c.set("user", { userId: "dev-user", platform: "line" })
-    return next()
+    return { userId: "dev-user", platform: "line" }
   }
-
   if (authorization.startsWith("Bearer ")) {
     const token = authorization.slice(7)
     const userId = await verifyLine(token)
-    if (userId) {
-      c.set("user", { userId, platform: "line" })
-      return next()
-    }
+    if (userId) return { userId, platform: "line" }
   }
-
   if (authorization.startsWith("TG ")) {
     const initData = authorization.slice(3)
     const userId = verifyTelegram(initData)
-    if (userId) {
-      c.set("user", { userId, platform: "telegram" })
-      return next()
-    }
+    if (userId) return { userId, platform: "telegram" }
   }
+  return null
+}
 
-  return c.json({ error: "Unauthorized" }, 401)
+// ─── HTTP middleware ──────────────────────────────────────────────────────────
+
+export async function authMiddleware(c: Context, next: Next) {
+  const authorization = c.req.header("Authorization") ?? ""
+  const user = await resolveAuth(authorization)
+  if (!user) return c.json({ error: "Unauthorized" }, 401)
+  c.set("user", user)
+  return next()
 }

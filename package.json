@@ -18,10 +18,12 @@
     "@prisma/client": "^6.4.1",
     "hono": "^4.7.4",
     "tsx": "^4.19.2",
+    "ws": "^8.20.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.9",
+    "@types/ws": "^8.18.1",
     "prisma": "^6.4.1",
     "typescript": "^5.8.2",
     "vitest": "^2.1.0"

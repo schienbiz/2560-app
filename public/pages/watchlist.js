@@ -9,11 +9,75 @@
 
 import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet, navigate } from "../app.js";
+import { getSession } from "../platform.js";
 
 function esc(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// ── WebSocket live-price client ───────────────────────────────────────────────
+
+let _ws = null;
+
+function connectWs() {
+  if (_ws) { _ws.close(); _ws = null; }
+
+  const session = getSession();
+  if (!session) return;
+
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws`);
+  _ws = ws;
+
+  ws.onopen = () => {
+    const token = session.platform === "telegram"
+      ? `TG ${session.token}`
+      : `Bearer ${session.token}`;
+    ws.send(JSON.stringify({ type: "auth", token }));
+  };
+
+  ws.onmessage = (evt) => {
+    let msg;
+    try { msg = JSON.parse(evt.data); } catch { return; }
+    if (msg.type === "price") applyPriceUpdate(msg);
+  };
+
+  ws.onclose = () => {
+    _ws = null;
+    // Reconnect only if watchlist tab is still active
+    const page = document.getElementById("page-watchlist");
+    if (page?.classList.contains("active")) {
+      setTimeout(connectWs, 5000);
+    }
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+function applyPriceUpdate(msg) {
+  const sym = msg.symbol;
+
+  const priceEl  = document.getElementById(`wl-price-${sym}`);
+  const maEl     = document.getElementById(`wl-ma-${sym}`);
+  const signalEl = document.getElementById(`wl-signal-${sym}`);
+
+  if (priceEl && msg.close != null) {
+    priceEl.textContent = Number(msg.close).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    priceEl.style.color = "var(--text)";
+  }
+
+  if (maEl && msg.ma25 != null && msg.ma60 != null) {
+    const above = msg.ma25 > msg.ma60;
+    maEl.textContent = above ? "MA25>MA60" : "MA25<MA60";
+    maEl.style.color = above ? "var(--green)" : "var(--red)";
+  }
+
+  if (signalEl && msg.signal && msg.signal !== "none") {
+    const isGolden = msg.signal === "golden_cross";
+    signalEl.innerHTML = `<span class="badge ${isGolden ? "green" : "red"}">${isGolden ? "▲ 黃金交叉" : "▼ 死亡交叉"}</span>`;
+  }
 }
 
 export async function renderWatchlist(container) {
@@ -32,6 +96,7 @@ export async function renderWatchlist(container) {
   document.getElementById("wl-add-btn").addEventListener("click", openAddSheet);
   document.getElementById("wl-scan-btn").addEventListener("click", () => runScan(container));
   await loadList(container);
+  connectWs();
 }
 
 async function loadList(container) {
@@ -86,10 +151,14 @@ function renderRow(item) {
       <div class="row">
         <div>
           <div style="font-weight:700;font-size:16px">${esc(item.symbol)}</div>
+          <div style="display:flex;gap:8px;margin-top:3px;align-items:center">
+            <span id="wl-price-${item.symbol}" class="text-sm" style="color:var(--muted)">—</span>
+            <span id="wl-ma-${item.symbol}" class="text-sm"></span>
+          </div>
           ${sigDate}
         </div>
         <div style="display:flex;align-items:center;gap:8px">
-          ${badge}
+          <span id="wl-signal-${item.symbol}">${badge}</span>
           <button class="btn danger wl-delete" data-id="${item.id}" style="padding:6px 10px;font-size:12px">移除</button>
         </div>
       </div>
