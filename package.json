@@ -15,7 +15,6 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "@hono/zod-validator": "^0.7.6",
-    "@line/bot-sdk": "^9.6.0",
     "@prisma/client": "^6.4.1",
     "hono": "^4.7.4",
     "tsx": "^4.19.2",

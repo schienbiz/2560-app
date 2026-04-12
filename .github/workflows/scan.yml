@@ -11,5 +11,5 @@ jobs:
     steps:
       - name: Trigger scan
         run: |
-          curl -f -X POST "${{ secrets.APP_URL }}/internal/scan" \
+          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/scan" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

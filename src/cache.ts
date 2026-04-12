@@ -27,8 +27,9 @@ export async function getCachedOHLCV(
   assetType: AssetType,
   days: number
 ): Promise<OHLCV[] | null> {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
   const rows = await db.ohlcvCache.findMany({
-    where: { symbol },
+    where: { symbol, date: { gte: cutoff } },
     orderBy: { date: "asc" },
   })
 

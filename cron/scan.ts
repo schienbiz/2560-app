@@ -46,6 +46,12 @@ export async function runScan() {
       if (signal === "death_cross"  && !alert.on_death)  continue
 
       const latest = ohlcv[ohlcv.length - 1]
+
+      // Dedup: skip if we already sent this exact signal for today's bar
+      const alreadySent = await db.signalHistory.findFirst({
+        where: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal },
+      })
+      if (alreadySent) continue
       const emoji  = signal === "golden_cross" ? "🟢" : "🔴"
       const label  = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
       const confLabel = confidence === "high" ? " 高信心度" : ""

@@ -11,5 +11,5 @@ jobs:
     steps:
       - name: Send reminders
         run: |
-          curl -f -X POST "${{ secrets.APP_URL }}/internal/remind" \
+          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
