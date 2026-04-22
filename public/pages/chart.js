@@ -486,8 +486,8 @@ async function runAiAnalysis(symbol, el) {
   try {
     const { analysis } = await api.post(`/api/ai/analyze/${symbol}`, {});
     el.innerHTML = `
-      <div class="card" style="margin-top:10px;border-left:3px solid var(--blue)">
-        <div style="font-size:11px;color:var(--blue);font-weight:600;margin-bottom:8px">✦ AI 分析</div>
+      <div class="card" style="margin-top:10px;border-top:2px solid var(--blue)">
+        <div style="font-size:11px;color:var(--blue);font-weight:600;margin-bottom:8px;letter-spacing:.04em">✦ AI 分析</div>
         <div style="font-size:13px;line-height:1.7;white-space:pre-wrap">${escapeHtml(analysis)}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:8px">由 AI 生成，僅供參考，不構成投資建議。</div>
       </div>
