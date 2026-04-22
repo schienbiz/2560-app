@@ -15,8 +15,8 @@
 
 import { createHmac } from "crypto"
 import type { Context } from "hono"
-import { db } from "../db.js"
 import { chatWithContext } from "../services/ai.js"
+import { getUserContext } from "../services/bot-context.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -57,34 +57,6 @@ async function replyMessage(replyToken: string, text: string) {
   })
 }
 
-// ─── User context from DB ─────────────────────────────────────────────────────
-
-async function getUserContext(userId: string) {
-  const [watchlistItems, recentTrades] = await Promise.all([
-    db.watchlist.findMany({
-      where:   { user_id: userId, platform: "line" },
-      select:  { symbol: true },
-      orderBy: { created_at: "desc" },
-      take:    10,
-    }),
-    db.tradeRecord.findMany({
-      where:   { user_id: userId, platform: "line" },
-      orderBy: { entry_date: "desc" },
-      take:    5,
-    }),
-  ])
-
-  return {
-    watchlist:    watchlistItems.map((w: { symbol: string }) => ({ symbol: w.symbol })),
-    recentTrades: recentTrades.map((t: { symbol: string; direction: string; entry_price: number; exit_price: number | null }) => ({
-      symbol:      t.symbol,
-      direction:   t.direction,
-      entry_price: t.entry_price,
-      exit_price:  t.exit_price,
-    })),
-  }
-}
-
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export async function handleLineWebhook(c: Context): Promise<Response> {
@@ -114,7 +86,7 @@ export async function handleLineWebhook(c: Context): Promise<Response> {
     if (!text) return
 
     try {
-      const ctx      = await getUserContext(userId)
+      const ctx      = await getUserContext(userId, "line")
       const response = await chatWithContext(text, ctx)
       await replyMessage(event.replyToken, response)
     } catch (err) {

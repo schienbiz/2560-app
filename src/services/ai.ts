@@ -27,8 +27,12 @@ async function chat(userMsg: string): Promise<string> {
   const key = process.env.GROQ_API_KEY
   if (!key) throw new Error("GROQ_API_KEY not set")
 
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+
   const res = await fetch(GROQ_URL, {
     method:  "POST",
+    signal:  controller.signal,
     headers: {
       "Content-Type":  "application/json",
       "Authorization": `Bearer ${key}`,
@@ -42,6 +46,7 @@ async function chat(userMsg: string): Promise<string> {
       ],
     }),
   })
+  clearTimeout(timeout)
 
   if (!res.ok) {
     const err = await res.text()
