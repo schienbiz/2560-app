@@ -39,7 +39,16 @@ async function boot() {
   }
 
   setupTabs();
-  await switchTab("watchlist");
+
+  // Deep-link: ?symbol=2330.TW navigates directly to chart
+  const urlSymbol = new URLSearchParams(window.location.search).get("symbol");
+  if (urlSymbol) {
+    // Strip the query param before rendering so back/refresh doesn't re-trigger
+    history.replaceState(null, "", window.location.pathname);
+    await switchTab("chart", { symbol: urlSymbol });
+  } else {
+    await switchTab("watchlist");
+  }
 }
 
 // ── Tab navigation ────────────────────────────────────────────────

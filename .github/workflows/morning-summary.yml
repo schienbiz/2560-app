@@ -1,0 +1,15 @@
+name: Morning AI summary
+
+on:
+  schedule:
+    - cron: "0 0 * * *"        # 8:00am Taipei (UTC+8) daily
+  workflow_dispatch:             # manual trigger for testing
+
+jobs:
+  morning-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger morning summary
+        run: |
+          curl -f --max-time 60 -X POST "${{ secrets.APP_URL }}/internal/morning-summary" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
