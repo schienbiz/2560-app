@@ -80,6 +80,29 @@ function applyPriceUpdate(msg) {
   }
 }
 
+function strategyIntroCard() {
+  const dismissed = localStorage.getItem("wl-intro-dismissed") === "1";
+  if (dismissed) return "";
+  return `
+    <div id="wl-intro" class="card" style="margin-bottom:16px;border-color:#2979ff44;background:#2979ff0d">
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:6px">什麼是 2560 戰法？</div>
+          <div style="font-size:12px;color:var(--text);line-height:1.6">
+            利用 <strong>25 日均線（MA25）</strong>和 <strong>60 日均線（MA60）</strong>的交叉判斷買賣時機：
+          </div>
+          <div style="font-size:12px;margin-top:6px;line-height:1.8">
+            <div><span class="badge green" style="margin-right:6px">▲ 黃金交叉</span>MA25 由下往上穿越 MA60 → <strong>買入訊號</strong></div>
+            <div style="margin-top:4px"><span class="badge red" style="margin-right:6px">▼ 死亡交叉</span>MA25 由上往下穿越 MA60 → <strong>賣出訊號</strong></div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">均線 = 過去 N 天收盤價的平均值，反映中期趨勢方向。</div>
+        </div>
+        <button id="wl-intro-close" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;padding:0 0 0 8px;line-height:1">×</button>
+      </div>
+    </div>
+  `;
+}
+
 export async function renderWatchlist(container) {
   container.innerHTML = `
     <div class="row" style="margin-bottom:16px">
@@ -89,9 +112,18 @@ export async function renderWatchlist(container) {
         <button class="btn secondary" id="wl-add-btn" style="padding:8px 12px">＋ 新增</button>
       </div>
     </div>
+    ${strategyIntroCard()}
     <div id="wl-scan-results"></div>
     <div id="wl-list"><div class="empty"><div class="spinner"></div></div></div>
   `;
+
+  const closeBtn = document.getElementById("wl-intro-close");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      localStorage.setItem("wl-intro-dismissed", "1");
+      document.getElementById("wl-intro")?.remove();
+    });
+  }
 
   document.getElementById("wl-add-btn").addEventListener("click", openAddSheet);
   document.getElementById("wl-scan-btn").addEventListener("click", () => runScan(container));
@@ -112,6 +144,13 @@ async function loadList(container) {
     listEl.querySelectorAll(".wl-row").forEach((el) => {
       el.addEventListener("click", () => {
         navigate("chart", { symbol: el.dataset.symbol });
+      });
+    });
+
+    listEl.querySelectorAll(".wl-settings").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openSettingsSheet(btn.dataset, container);
       });
     });
 
@@ -142,6 +181,7 @@ function renderRow(item) {
     badge = `<span class="badge red">▼ 死亡交叉</span>`;
   }
 
+  const displayName = esc(item.label || item.symbol);
   const sigDate = sig?.signal_date
     ? `<span class="text-sm text-muted">${String(sig.signal_date).slice(0, 10)}</span>`
     : "";
@@ -150,7 +190,7 @@ function renderRow(item) {
     <div class="card wl-row" data-symbol="${item.symbol}" style="cursor:pointer">
       <div class="row">
         <div>
-          <div style="font-weight:700;font-size:16px">${esc(item.symbol)}</div>
+          <div style="font-weight:700;font-size:16px">${displayName}${item.label ? `<span class="text-sm text-muted" style="font-weight:400;margin-left:6px">${esc(item.symbol)}</span>` : ""}</div>
           <div style="display:flex;gap:8px;margin-top:3px;align-items:center">
             <span id="wl-price-${item.symbol}" class="text-sm" style="color:var(--muted)">—</span>
             <span id="wl-ma-${item.symbol}" class="text-sm"></span>
@@ -159,6 +199,7 @@ function renderRow(item) {
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span id="wl-signal-${item.symbol}">${badge}</span>
+          <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" style="padding:6px 10px;font-size:14px" title="設定">⚙</button>
           <button class="btn danger wl-delete" data-id="${item.id}" style="padding:6px 10px;font-size:12px">移除</button>
         </div>
       </div>
@@ -196,6 +237,14 @@ async function runScan(container) {
     resultsEl.querySelectorAll(".scan-row").forEach((el) => {
       el.addEventListener("click", () => navigate("chart", { symbol: el.dataset.symbol }));
     });
+
+    // 高信心 tooltip
+    resultsEl.querySelectorAll(".conf-tip").forEach(el => {
+      el.addEventListener("click", e => {
+        e.stopPropagation();
+        showToast("成交量放大（超過10日均量×1.2）且價格貼近 MA60，訊號可信度較高", 4000);
+      });
+    });
   } catch {
     resultsEl.innerHTML = "";
     showToast("掃描失敗，請稍後再試");
@@ -220,7 +269,7 @@ function renderScanRow(item) {
   if (item.signal === "death_cross")  badge = `<span class="badge red">▼ 死亡交叉</span>`;
 
   const conf = item.confidence === "high"
-    ? `<span class="text-sm" style="color:var(--yellow)">高信心</span>`
+    ? `<span class="text-sm conf-tip" style="color:var(--yellow);cursor:pointer" title="成交量放大 + 價格貼近 MA60，訊號可信度較高">高信心 ⓘ</span>`
     : "";
 
   const closePrice = item.close != null
@@ -246,6 +295,67 @@ function renderScanRow(item) {
       </div>
     </div>
   `;
+}
+
+// ── Settings sheet ───────────────────────────────────────────────────────────
+
+function openSettingsSheet(dataset, container) {
+  const { id, symbol, label, onGolden, onDeath, active } = dataset;
+  const checked = (val) => val === "true" ? "checked" : "";
+
+  openSheet(`
+    <h3>⚙ ${esc(symbol)} 設定</h3>
+    <div class="field">
+      <label>顯示名稱（選填）</label>
+      <input id="settings-label-input" placeholder="${esc(symbol)}" value="${esc(label)}" maxlength="50" />
+      <div class="text-sm text-muted" style="margin-top:4px">留空則顯示股票代碼</div>
+    </div>
+    <div class="field" style="margin-top:16px">
+      <label style="margin-bottom:8px;display:block">通知設定</label>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <span>▲ 黃金交叉通知</span>
+        <input type="checkbox" id="settings-golden" ${checked(onGolden)} />
+      </label>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
+        <span>▼ 死亡交叉通知</span>
+        <input type="checkbox" id="settings-death" ${checked(onDeath)} />
+      </label>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
+        <span>啟用此標的通知</span>
+        <input type="checkbox" id="settings-active" ${checked(active)} />
+      </label>
+    </div>
+    <button class="btn primary full" id="settings-save" style="margin-top:16px">儲存</button>
+  `);
+
+  document.getElementById("settings-save").addEventListener("click", async () => {
+    const newLabel = document.getElementById("settings-label-input").value.trim();
+    const newGolden = document.getElementById("settings-golden").checked;
+    const newDeath = document.getElementById("settings-death").checked;
+    const newActive = document.getElementById("settings-active").checked;
+
+    const btn = document.getElementById("settings-save");
+    btn.disabled = true;
+    btn.textContent = "儲存中…";
+
+    try {
+      await Promise.all([
+        api.put(`/api/watchlist/${id}`, { label: newLabel || null }),
+        api.put(`/api/watchlist/${id}/alert`, {
+          on_golden: newGolden,
+          on_death:  newDeath,
+          active:    newActive,
+        }),
+      ]);
+      closeSheet();
+      showToast("已儲存");
+      await loadList(container);
+    } catch {
+      showToast("儲存失敗");
+      btn.disabled = false;
+      btn.textContent = "儲存";
+    }
+  });
 }
 
 // ── Add symbol sheet ──────────────────────────────────────────────────────────

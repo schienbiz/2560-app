@@ -80,6 +80,27 @@ watchlistRouter.delete("/:id", async c => {
   return c.json({ ok: true })
 })
 
+// PUT /api/watchlist/:id  (update label)
+const updateSchema = z.object({
+  label: z.string().max(50).nullable(),
+})
+
+watchlistRouter.put("/:id", zValidator("json", updateSchema), async c => {
+  const { userId, platform } = c.get("user")
+  const id = c.req.param("id")
+  const { label } = c.req.valid("json")
+
+  const item = await db.watchlist.findFirst({ where: { id, user_id: userId, platform } })
+  if (!item) return c.json({ error: "Not found" }, 404)
+
+  const updated = await db.watchlist.update({
+    where: { id },
+    data: { label: label ?? null },
+    include: { alert: true },
+  })
+  return c.json(updated)
+})
+
 // PUT /api/watchlist/:id/alert
 const alertSchema = z.object({
   on_golden: z.boolean().optional(),

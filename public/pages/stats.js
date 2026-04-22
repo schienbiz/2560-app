@@ -6,6 +6,7 @@
  */
 
 import { api } from "../api.js";
+import { showToast } from "../app.js";
 
 export async function renderStats(container) {
   container.innerHTML = `
@@ -34,7 +35,8 @@ async function loadStats(container) {
     // Overall summary
     html += `
       <div class="card" style="margin-bottom:16px">
-        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:10px">總覽</div>
+        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:2px">總覽</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">所有交易的整體表現。點 ⓘ 了解各指標說明。</div>
         <div class="stat-grid">
           ${statCard("總交易次數", overall.count, "")}
           ${statCard("勝率", pct(overall.winRate, false), "", winColor(overall.winRate))}
@@ -57,6 +59,11 @@ async function loadStats(container) {
       death_cross:  "▼ 死亡交叉訊號",
       manual:       "手動記錄",
     };
+    const groupDesc = {
+      golden_cross: "MA25 由下往上穿越 MA60，視為買入訊號。這些是因黃金交叉而進場的交易。",
+      death_cross:  "MA25 由上往下穿越 MA60，視為賣出／做空訊號。這些是因死亡交叉而進場的交易。",
+      manual:       "未連結訊號、手動記錄的交易。",
+    };
 
     for (const key of groupOrder) {
       const g = bySignal[key];
@@ -67,7 +74,8 @@ async function loadStats(container) {
 
       html += `
         <div class="card">
-          <div style="font-size:12px;color:${accent};font-weight:600;margin-bottom:10px">${groupLabel[key]}</div>
+          <div style="font-size:12px;color:${accent};font-weight:600;margin-bottom:2px">${groupLabel[key]}</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${groupDesc[key]}</div>
           <div class="stat-grid">
             ${statCard("交易次數", g.count, "")}
             ${statCard("勝率", pct(g.winRate, false), "", winColor(g.winRate))}
@@ -84,19 +92,43 @@ async function loadStats(container) {
     }
 
     body.innerHTML = html;
+    bindTips(body);
   } catch {
     body.innerHTML = `<div class="empty">載入失敗，請稍後再試</div>`;
   }
 }
 
+const TERM_TIPS = {
+  "勝率":     "已結清的交易中，獲利筆數佔總筆數的比例。50% 以上代表超過一半的交易有獲利。",
+  "平均報酬": "每筆已結清交易的平均報酬率（出場價 ÷ 進場價 − 1）。正數代表平均有獲利。",
+  "最大獲利": "所有已結清交易中，單筆最高的報酬率。",
+  "最大虧損": "所有已結清交易中，單筆最大的虧損率（負數）。",
+  "總交易次數": "包含未結清（持倉中）和已結清的所有交易筆數。",
+  "已結清": "已填入出場價格的交易，可計算實際損益。",
+  "持倉中": "尚未填入出場價格的交易，損益待計算。",
+};
+
 function statCard(label, value, unit, color = "var(--text)") {
   const display = value === "" ? "—" : `${value}${unit}`;
+  const tip = TERM_TIPS[label];
+  const tipBtn = tip
+    ? `<span class="stat-tip" data-tip="${label}" style="color:var(--muted);font-size:11px;cursor:pointer;margin-left:3px">ⓘ</span>`
+    : "";
   return `
     <div class="stat-card">
-      <div class="text-sm text-muted">${label}</div>
+      <div class="text-sm text-muted">${label}${tipBtn}</div>
       <div class="val" style="color:${color}">${display}</div>
     </div>
   `;
+}
+
+function bindTips(container) {
+  container.querySelectorAll(".stat-tip").forEach(el => {
+    el.addEventListener("click", e => {
+      e.stopPropagation();
+      showToast(TERM_TIPS[el.dataset.tip] ?? "", 4000);
+    });
+  });
 }
 
 // For returns: show sign (±). For rates like win rate: no sign.

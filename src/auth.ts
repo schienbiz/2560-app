@@ -50,7 +50,8 @@ async function verifyLine(token: string): Promise<string | null> {
 
     lineTokenCache.set(token, { userId: data.sub, expiresAt: Date.now() + LINE_TOKEN_TTL })
     return data.sub
-  } catch {
+  } catch (err) {
+    console.error("LINE token verify failed:", err)
     return null
   }
 }

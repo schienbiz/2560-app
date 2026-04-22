@@ -5,8 +5,16 @@ import { watchlistRouter } from "./routes/watchlist.js"
 import { tradesRouter }    from "./routes/trades.js"
 import { remindersRouter } from "./routes/reminders.js"
 import { scanRouter }      from "./routes/scan.js"
+import { aiRouter }        from "./routes/ai.js"
+import { handleLineWebhook }     from "./webhooks/line.js"
+import { handleTelegramWebhook } from "./webhooks/telegram.js"
 
 const app = new Hono()
+
+app.onError((err, c) => {
+  console.error("Unhandled error:", err)
+  return c.json({ error: "Internal server error" }, 500)
+})
 
 // ─── API ─────────────────────────────────────────────────────────────────────
 app.route("/api",           chartRouter)
@@ -14,6 +22,11 @@ app.route("/api/watchlist", watchlistRouter)
 app.route("/api/trades",    tradesRouter)
 app.route("/api/reminders", remindersRouter)
 app.route("/api/scan",      scanRouter)
+app.route("/api/ai",        aiRouter)
+
+// ─── Bot webhooks ─────────────────────────────────────────────────────────────
+app.post("/webhook/line",     c => handleLineWebhook(c))
+app.post("/webhook/telegram", c => handleTelegramWebhook(c))
 
 // ─── Internal cron endpoints (guarded by INTERNAL_SECRET header) ─────────────
 app.post("/internal/scan", async c => {

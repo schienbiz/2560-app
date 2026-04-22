@@ -2,7 +2,7 @@ name: Daily signal scan
 
 on:
   schedule:
-    - cron: "30 8 * * 1-5"   # 4:30pm Taipei (UTC+8) on weekdays
+    - cron: "30 8 * * *"     # 4:30pm Taipei (UTC+8) daily (crypto trades weekends too)
   workflow_dispatch:           # manual trigger for testing
 
 jobs:

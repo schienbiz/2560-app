@@ -5,6 +5,7 @@ import { db } from "../db.js"
 import { authMiddleware } from "../auth.js"
 import { computeStats } from "../engine/stats.js"
 import type { TradeLike, SignalType } from "../engine/stats.js"
+import { getAdapter } from "../adapters/index.js"
 
 export const tradesRouter = new Hono()
 tradesRouter.use("*", authMiddleware)
@@ -55,14 +56,23 @@ const createSchema = z.object({
 tradesRouter.post("/", zValidator("json", createSchema), async c => {
   const { userId, platform } = c.get("user")
   const body = c.req.valid("json")
-  const { adapter, normalizedSymbol } = await import("../adapters/index.js").then(m => m.getAdapter(body.symbol))
+
+  let normalizedSymbol = body.symbol.toUpperCase()
+  let asset_type: "stock" | "crypto" = /^\d{4}$/.test(body.symbol) ? "stock" : "crypto"
+  try {
+    const result = await getAdapter(body.symbol)
+    normalizedSymbol = result.normalizedSymbol
+    asset_type = result.adapter.getAssetType()
+  } catch {
+    console.error("getAdapter failed for symbol:", body.symbol, "— using format fallback")
+  }
 
   const trade = await db.tradeRecord.create({
     data: {
       user_id:      userId,
       platform,
       symbol:       normalizedSymbol,
-      asset_type:   adapter.getAssetType(),
+      asset_type:   asset_type,
       direction:    body.direction,
       entry_date:   new Date(body.entry_date),
       entry_price:  body.entry_price,
