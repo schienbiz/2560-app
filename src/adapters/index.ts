@@ -21,11 +21,6 @@ export function getAdapter(symbol: string): { adapter: MarketAdapter; normalized
     return { adapter: binance, normalizedSymbol: upper }
   }
 
-  // Taiwan 4-digit shorthand (e.g. "2330" → "2330.TW")
-  if (/^\d{4}$/.test(upper)) {
-    return { adapter: yahoo, normalizedSymbol: `${upper}.TW` }
-  }
-
   return { adapter: yahoo, normalizedSymbol: upper }
 }
 

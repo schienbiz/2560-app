@@ -38,14 +38,36 @@ export class YahooFinanceAdapter implements MarketAdapter {
   }
 
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {
+    // 4-digit Taiwan stock shorthand — try TWSE (.TW) then OTC (.TWO)
+    if (/^\d{4}$/.test(symbol)) {
+      for (const suffix of [".TW", ".TWO"]) {
+        const bars = await this._tryFetch(symbol + suffix, days)
+        if (bars) return bars
+      }
+      throw new Error(`No data for symbol: ${symbol}`)
+    }
+
+    const bars = await this._tryFetch(symbol, days)
+    if (bars) return bars
+
+    // Stored as .TW but actually OTC — try .TWO fallback (handles legacy DB entries)
+    if (symbol.toUpperCase().endsWith(".TW")) {
+      const twoData = await this._tryFetch(symbol.slice(0, -3) + ".TWO", days)
+      if (twoData) return twoData
+    }
+
+    throw new Error(`No data for symbol: ${symbol}`)
+  }
+
+  private async _tryFetch(symbol: string, days: number): Promise<OHLCV[] | null> {
     const range = daysToRange(days)
     const url = `${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=${range}`
     const res = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } })
-    if (!res.ok) throw new Error(`Yahoo fetch failed: ${res.status} ${symbol}`)
+    if (!res.ok) return null
 
     const json = await res.json() as YahooResponse
     const result = json.chart?.result?.[0]
-    if (!result) throw new Error(`No data for symbol: ${symbol}`)
+    if (!result) return null
 
     const { timestamp, indicators } = result
     const quote = indicators.quote[0]
