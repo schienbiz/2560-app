@@ -20,6 +20,8 @@ enum AssetType {
 enum SignalType {
   golden_cross
   death_cross
+  proximity_golden
+  proximity_exit
   none
 }
 

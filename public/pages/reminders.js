@@ -23,9 +23,11 @@ export async function renderReminders(container) {
       <button class="btn secondary" id="rem-add-btn" style="padding:8px 12px">＋ 新增</button>
     </div>
     <div id="rem-list"><div class="empty"><div class="spinner"></div></div></div>
+    <h2 style="margin-top:24px;margin-bottom:12px">提醒歷史</h2>
+    <div id="sig-list"><div class="empty"><div class="spinner"></div></div></div>
   `;
   document.getElementById("rem-add-btn").addEventListener("click", () => openAddSheet(container));
-  await loadReminders(container);
+  await Promise.all([loadReminders(container), loadSignalHistory(container)]);
 }
 
 function taipeiToday() {
@@ -82,6 +84,51 @@ function renderRow(r, today) {
         <button class="btn danger rem-delete-btn" data-id="${r.id}" style="padding:4px 10px;font-size:11px">刪除</button>
       </div>
       ${r.note ? `<div class="text-sm text-muted" style="margin-top:6px">${esc(r.note)}</div>` : ""}
+    </div>
+  `;
+}
+
+async function loadSignalHistory(container) {
+  const listEl = container.querySelector("#sig-list");
+  try {
+    const data = await api.get("/api/signals?limit=30");
+    const signals = data.signals ?? [];
+    if (!signals.length) {
+      listEl.innerHTML = `<div class="empty">尚無提醒紀錄</div>`;
+      return;
+    }
+    listEl.innerHTML = signals.map(renderSignalRow).join("");
+  } catch {
+    listEl.innerHTML = `<div class="empty">載入失敗，請稍後再試</div>`;
+  }
+}
+
+function renderSignalRow(s) {
+  const LABELS = {
+    golden_cross:    { icon: "🟢", text: "黃金交叉" },
+    death_cross:     { icon: "🔴", text: "死亡交叉" },
+    proximity_golden:{ icon: "📍", text: "接近進場區" },
+    proximity_exit:  { icon: "🔔", text: "離開進場區" },
+    none:            { icon: "—",  text: "無訊號" },
+  };
+  const { icon, text } = LABELS[s.signal] ?? { icon: "•", text: esc(s.signal) };
+  const dateStr = String(s.signal_date).slice(0, 10);
+  const conf    = s.confidence === "high" ? " 高信心度" : s.confidence === "medium" ? " 中信心度" : "";
+
+  return `
+    <div class="card">
+      <div class="row">
+        <div>
+          <span style="font-weight:700">${esc(s.symbol)}</span>
+          <span style="margin-left:6px">${icon} ${text}${conf}</span>
+        </div>
+        <span class="text-sm text-muted">${dateStr}</span>
+      </div>
+      <div class="text-sm text-muted" style="margin-top:4px">
+        收盤 ${s.close_price?.toLocaleString() ?? "—"}
+        ・MA25 ${s.ma25?.toFixed(2) ?? "—"}
+        ・MA60 ${s.ma60?.toFixed(2) ?? "—"}
+      </div>
     </div>
   `;
 }

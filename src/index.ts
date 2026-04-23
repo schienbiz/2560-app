@@ -6,6 +6,7 @@ import { tradesRouter }    from "./routes/trades.js"
 import { remindersRouter } from "./routes/reminders.js"
 import { scanRouter }      from "./routes/scan.js"
 import { aiRouter }        from "./routes/ai.js"
+import { signalsRouter }   from "./routes/signals.js"
 import { handleLineWebhook }     from "./webhooks/line.js"
 import { handleTelegramWebhook } from "./webhooks/telegram.js"
 
@@ -23,6 +24,7 @@ app.route("/api/trades",    tradesRouter)
 app.route("/api/reminders", remindersRouter)
 app.route("/api/scan",      scanRouter)
 app.route("/api/ai",        aiRouter)
+app.route("/api/signals",   signalsRouter)
 
 // ─── Bot webhooks ─────────────────────────────────────────────────────────────
 app.post("/webhook/line",     c => handleLineWebhook(c))
@@ -46,6 +48,16 @@ app.post("/internal/remind", async c => {
   }
   const { runRemind } = await import("../cron/remind.js")
   await runRemind()
+  return c.json({ ok: true })
+})
+
+app.post("/internal/morning-summary", async c => {
+  const secret = c.req.header("x-internal-secret")
+  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+    return c.json({ error: "Forbidden" }, 403)
+  }
+  const { runMorningSummary } = await import("../cron/morning-summary.js")
+  runMorningSummary().catch(err => console.error("Morning summary error:", err))
   return c.json({ ok: true })
 })
 

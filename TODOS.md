@@ -5,6 +5,63 @@ actionable 3 months from now, not just a vague bullet.
 
 ---
 
+## Configurable proximity threshold per-symbol
+
+**What:** Replace the hardcoded `PROXIMITY_THRESHOLD = 0.015` in `cron/scan.ts` with a
+per-symbol threshold stored in `WatchlistAlert` and configurable from the Reminders tab UI.
+
+**Why:** 1.5% is a starting point. After a week of real data you'll know if it's too tight
+(no alerts) or too loose (too many). Right now tuning requires a code edit + redeploy.
+
+**Pros:** No redeploy needed to tune. Per-symbol granularity (crypto vs TW stocks move differently).
+**Cons:** Prisma migration required (new Float field on WatchlistAlert). UI input in Reminders tab.
+
+**Context:** Skipped in CEO plan 2026-04-22. Start at 1.5% hardcoded. Revisit after 1 week
+of proximity alert data. Build after you've seen which symbols fire too much/too little.
+
+**Depends on:** Proximity alert working in production (v1 of AI watchdog shipped)
+
+---
+
+## Intraday proximity alerts
+
+**What:** Move from daily-close price checks to intraday WebSocket price feed. Alert the moment
+price touches the MA25 zone during trading hours, not 24 hours later at the nightly scan.
+
+**Why:** The most useful moment for the 2560 strategy is when price hits the zone. Daily close
+means you're always 1 candle late. Intraday means you can actually enter at the zone.
+
+**Pros:** Dramatically better timing. Completes the "stop watching the chart" promise.
+**Cons:** Requires a real-time price feed (Binance WebSocket for crypto, Fugle/PushAPI for TW
+stocks). Render free tier doesn't sustain continuous WebSocket connections — needs paid tier
+or a different hosting model (Fly.io, Railway, or a dedicated WebSocket server).
+
+**Context:** Identified in CEO plan 2026-04-22 10x check. Day 1 version (daily close) ships
+first. Revisit once the app has regular users and the daily-close pattern is validated.
+
+**Depends on:** Daily-close proximity alert live + validated; hosting upgrade decision
+
+---
+
+## Alert history: outcome tracking
+
+**What:** Extend the alert history log (coming in v1 AI watchdog) with outcome tracking. After
+each proximity/cross alert, did price move in the predicted direction? Show: "5 days after this
+proximity alert, the stock was +4.2%".
+
+**Why:** Turns the alert history from a log into a feedback loop. You can see whether the
+2560戰法 proximity signals are actually accurate in practice.
+
+**Pros:** Closes the strategy-verification loop. Differentiates from any off-the-shelf signal tool.
+**Cons:** Requires knowing the "target" (entry at close on alert day, evaluate 5/10/20 days later).
+Data is already in TradeRecord — could cross-reference automatically.
+
+**Context:** Deferred from CEO plan 2026-04-22. Ship alert history (v1) first, then add outcomes.
+
+**Depends on:** Alert history log shipped and in use for at least 2 weeks
+
+---
+
 ## Community leaderboard
 
 **What:** Public opt-in win rates. "Top 2560 traders this month." Viral LINE acquisition.
