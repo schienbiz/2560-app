@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.1.1] — 2026-04-24
+
+### Changed
+- **Mobile watchlist layout**: signal badge now stacks above ⚙ / 移除 buttons so the row
+  never overflows on narrow screens; symbol name truncates with ellipsis instead of wrapping
+- **Signal date** (`sigDate`) is now rendered in a `<div>` block element instead of an inline
+  `<span>`, giving it consistent spacing on all screen widths
+
+### Added
+- **Font size toggle**: `A⁻ / A / A⁺` button in the watchlist header cycles between 13 px,
+  14 px, and 16 px base font size; choice persists in localStorage and applies before first
+  render (no flash of unstyled content)
+
+### Fixed
+- **"無訊號" not resetting via WebSocket**: when the server sends `signal: "none"` or any
+  unrecognised signal value over the live-price WebSocket, the badge now resets to 無訊號
+  instead of keeping the previous cross badge stale on screen
+- **Symbol ID collisions**: `safeId()` now encodes each non-alphanumeric character as
+  `_<charCode>_` (e.g. `/` → `_47_`) so symbols like `BTC/USDT` and `BTC_USDT` no longer
+  share the same DOM element ID, preventing price/signal updates targeting the wrong row
+- **WebSocket reconnect race**: the pending reconnect `setTimeout` handle is now cleared at
+  the start of `connectWs()`, preventing a dangling timer from closing a freshly-opened
+  connection when the watchlist re-renders within 5 seconds of a disconnect
+- **localStorage font-size injection**: raw `localStorage` value is now validated against the
+  `["sm","md","lg"]` allowlist in both the inline head script and `currentFs()` before being
+  written to `document.documentElement.dataset.fs`; invalid values fall back to `"md"`
+- **`signal_date` XSS**: date string is now passed through `esc()` before insertion into
+  `innerHTML`, consistent with all other server-sourced fields
+- **Font size button null guard**: `wl-fs-btn` click listener is now guarded so it won't
+  throw if the container renders in a detached DOM node
+
 ## [1.1.0] — 2026-04-23
 
 ### Added

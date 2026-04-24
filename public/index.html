@@ -249,7 +249,17 @@
     }
     .toggle-row:last-child { border-bottom: none; }
     input[type=checkbox] { width: 36px; height: 20px; accent-color: var(--blue); }
+
+    /* ── Font size ────────────────────────────────────────────── */
+    html[data-fs="sm"] { font-size: 13px; }
+    html[data-fs="md"] { font-size: 14px; }
+    html[data-fs="lg"] { font-size: 16px; }
   </style>
+  <script>
+    // Apply saved font size before render to avoid FOUC (targets html element via html[data-fs=...] CSS)
+    var _fs = localStorage.getItem("fontSize");
+    document.documentElement.dataset.fs = ["sm","md","lg"].includes(_fs) ? _fs : "md";
+  </script>
 </head>
 <body>
 <div id="app">
