@@ -56,9 +56,10 @@ proximity alert, the stock was +4.2%".
 **Cons:** Requires knowing the "target" (entry at close on alert day, evaluate 5/10/20 days later).
 Data is already in TradeRecord — could cross-reference automatically.
 
-**Context:** Deferred from CEO plan 2026-04-22. Ship alert history (v1) first, then add outcomes.
+**Context:** Deferred from CEO plan 2026-04-22. Alert history UI shipped in v1.1.0 — start the
+clock. Revisit outcome tracking after 2 weeks of real alert data.
 
-**Depends on:** Alert history log shipped and in use for at least 2 weeks
+**Depends on:** Alert history log in use for at least 2 weeks (shipped v1.1.0 — 2026-04-23)
 
 ---
 
