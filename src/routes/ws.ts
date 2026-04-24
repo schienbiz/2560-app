@@ -4,8 +4,10 @@
  * PROTOCOL:
  *   1. Client connects: GET /ws  (HTTP → WS upgrade)
  *   2. Client sends:    { type: "auth", token: "TG <initData>" | "Bearer <id_token>" }
- *   3. Server replies:  { type: "ready" }  then pushes every 30 s:
+ *   3. Server replies:  { type: "ready" }  then pushes every 10 s:
  *                       { type: "price", symbol, close, ma25, ma60, signal, confidence }
+ *      close = live intraday price (TWSE real-time for TW stocks, Kraken ticker for crypto,
+ *              Yahoo v7 quote for US stocks). Falls back to last OHLCV close when unavailable.
  *   4. On bad auth:     { type: "error", message: "Unauthorized" }  then closes.
  *
  * Registered in server.ts via WebSocketServer + http upgrade event.
@@ -18,7 +20,7 @@ import { getAdapter } from "../adapters/index.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { analyzeSymbol } from "../engine/index.js"
 
-const INTERVAL_MS = 30_000
+const INTERVAL_MS = 10_000
 
 type WsState = { user?: AuthUser; timer?: ReturnType<typeof setInterval> }
 const state = new WeakMap<WebSocket, WsState>()
@@ -45,10 +47,17 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
       const result = analyzeSymbol(ohlcv)
       const latest = ohlcv[ohlcv.length - 1]
 
+      // Try live quote; fall back to last OHLCV close when unavailable (market closed, etc.)
+      let liveClose = latest?.close ?? null
+      if (adapter.fetchQuote) {
+        const q = await adapter.fetchQuote(normalizedSymbol).catch(() => null)
+        if (q !== null) liveClose = q
+      }
+
       ws.send(JSON.stringify({
         type:       "price",
         symbol:     normalizedSymbol,
-        close:      latest?.close ?? null,
+        close:      liveClose,
         ma25:       result.ma25,
         ma60:       result.ma60,
         signal:     result.signal,

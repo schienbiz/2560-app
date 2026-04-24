@@ -32,7 +32,18 @@ export async function initPlatform() {
 
   if (isTelegram) {
     const tg = window.Telegram?.WebApp;
-    if (tg) { tg.expand(); tg.ready(); }
+    if (tg) {
+      tg.expand();
+      tg.ready();
+      // Override --safe-t with Telegram's content safe area inset so our header
+      // buttons don't overlap the mini app navigation bar (Close / back buttons).
+      // contentSafeAreaInset.top is the height of the Telegram header drawn over the WebView.
+      // Falls back to safeAreaInset.top (older Telegram), then to the CSS env() default.
+      const tgTop = tg.contentSafeAreaInset?.top ?? tg.safeAreaInset?.top ?? 0;
+      if (tgTop > 0) {
+        document.documentElement.style.setProperty("--safe-t", `${tgTop}px`);
+      }
+    }
 
     // initData from window.Telegram.WebApp or from URL hash
     const initData = tg?.initData || tgWebAppData || "";

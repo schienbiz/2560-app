@@ -5,4 +5,10 @@ export interface MarketAdapter {
   validateSymbol(symbol: string): Promise<boolean>
   /** Fetch the last `days` calendar days of daily OHLCV. */
   fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]>
+  /**
+   * Fetch the current live/intraday price.
+   * Returns null when the market is closed or the source is unavailable.
+   * Falls back to the last OHLCV close in ws.ts when null.
+   */
+  fetchQuote(symbol: string): Promise<number | null>
 }
