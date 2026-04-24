@@ -8,6 +8,10 @@
  *     → { result: { XXBTZUSD: [ [time, open, high, low, close, vwap, volume, count] ] } }
  *     → normalize to OHLCV[]
  *
+ *   fetchQuote("BTCUSDT")
+ *     → GET https://api.kraken.com/0/public/Ticker?pair=XBTUSD
+ *     → last trade price from result[pair].c[0]
+ *
  * No API key required. No rate limit for public endpoints.
  */
 
@@ -47,6 +51,22 @@ export class BinanceAdapter implements MarketAdapter {
     return /^[A-Z0-9]{3,20}$/.test(symbol.toUpperCase())
   }
 
+  async fetchQuote(symbol: string): Promise<number | null> {
+    const pair = toKrakenPair(symbol)
+    try {
+      const url = `${BASE}/Ticker?pair=${pair}`
+      const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
+      if (!res.ok) return null
+      const json = await res.json() as KrakenTickerResponse
+      if (json.error?.length) return null
+      const data = Object.values(json.result)[0]
+      const price = parseFloat(data.c[0])
+      return isNaN(price) ? null : price
+    } catch {
+      return null
+    }
+  }
+
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {
     const pair = toKrakenPair(symbol)
     // interval=1440 = daily candles; since = unix timestamp for 'days' ago
@@ -84,4 +104,11 @@ type KrakenOHLCRow = [number, string, string, string, string, string, string, nu
 interface KrakenResponse {
   error: string[]
   result: Record<string, KrakenOHLCRow[] | number>
+}
+
+interface KrakenTickerResponse {
+  error: string[]
+  result: Record<string, {
+    c: [string, string]  // [last trade price, lot volume]
+  }>
 }

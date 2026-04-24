@@ -8,6 +8,11 @@
  *     → { chart: { result: [{ timestamp[], indicators: { quote: [{ open, high, low, close, volume }] } }] } }
  *     → normalize to OHLCV[]
  *
+ *   fetchQuote("2330.TW")
+ *     → Taiwan stocks: TWSE mis.twse.com.tw real-time API (same source as 台新/玉山 Securities)
+ *       Falls back to Yahoo Finance v7/finance/quote when TWSE is closed or unavailable.
+ *     → US stocks: Yahoo Finance v7/finance/quote (regularMarketPrice)
+ *
  * Symbol formats:
  *   Taiwan stocks:  "2330.TW"
  *   US stocks:      "AAPL", "TSLA"
@@ -17,7 +22,9 @@
 import type { MarketAdapter } from "./interface.js"
 import type { OHLCV } from "../engine/types.js"
 
-const BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
+const BASE       = "https://query1.finance.yahoo.com/v8/finance/chart"
+const QUOTE_BASE = "https://query1.finance.yahoo.com/v7/finance/quote"
+const TWSE_BASE  = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
 function daysToRange(days: number): string {
   if (days <= 5)   return "5d"
@@ -59,6 +66,64 @@ export class YahooFinanceAdapter implements MarketAdapter {
     throw new Error(`No data for symbol: ${symbol}`)
   }
 
+  async fetchQuote(symbol: string): Promise<number | null> {
+    const upper = symbol.toUpperCase()
+
+    // Taiwan stocks — primary source: TWSE mis.twse.com.tw (same data as 台新/玉山 Securities)
+    const twCode =
+      upper.endsWith(".TWO") ? upper.slice(0, -4)
+      : upper.endsWith(".TW")  ? upper.slice(0, -3)
+      : /^\d{4}$/.test(upper)  ? upper
+      : null
+
+    if (twCode) {
+      const twsePrice = await this._twseQuote(twCode)
+      if (twsePrice !== null) return twsePrice
+      // TWSE unavailable (market closed or holiday) — fall through to Yahoo
+    }
+
+    // US stocks and TWSE fallback: Yahoo Finance v7 real-time quote
+    return this._yahooQuote(symbol)
+  }
+
+  /** TWSE/TPEX real-time ticker — free, no auth, same source used by all TW brokerages */
+  private async _twseQuote(code: string): Promise<number | null> {
+    // Try TWSE-listed first, then TPEX (OTC)
+    for (const [ex, suffix] of [["tse", ".tw"], ["otc", ".two"]] as [string, string][]) {
+      try {
+        const url = `${TWSE_BASE}?ex_ch=${ex}_${code}${suffix}&_=${Date.now()}`
+        const res = await fetch(url, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(4000),
+        })
+        if (!res.ok) continue
+        const json = await res.json() as TwseResponse
+        const z = json.msgArray?.[0]?.z
+        if (!z || z === "-" || z === "N/A") continue
+        const price = parseFloat(z)
+        if (!isNaN(price) && price > 0) return price
+      } catch { /* timeout or network error — try next */ }
+    }
+    return null
+  }
+
+  /** Yahoo Finance v7 quote — real-time price for US stocks, fallback for TW */
+  private async _yahooQuote(symbol: string): Promise<number | null> {
+    try {
+      const url = `${QUOTE_BASE}?symbols=${encodeURIComponent(symbol)}&fields=regularMarketPrice`
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(4000),
+      })
+      if (!res.ok) return null
+      const json = await res.json() as YahooQuoteResponse
+      const price = json.quoteResponse?.result?.[0]?.regularMarketPrice
+      return typeof price === "number" ? price : null
+    } catch {
+      return null
+    }
+  }
+
   private async _tryFetch(symbol: string, days: number): Promise<OHLCV[] | null> {
     const range = daysToRange(days)
     const url = `${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=${range}`
@@ -87,6 +152,22 @@ export class YahooFinanceAdapter implements MarketAdapter {
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
+
+interface TwseResponse {
+  msgArray?: Array<{
+    c?: string  // stock code
+    z?: string  // current price ("-" when market closed)
+    y?: string  // yesterday close
+  }>
+}
+
+interface YahooQuoteResponse {
+  quoteResponse?: {
+    result?: Array<{
+      regularMarketPrice?: number
+    }>
+  }
+}
 
 interface YahooResponse {
   chart: {
