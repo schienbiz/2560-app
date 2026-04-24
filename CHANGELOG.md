@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.2] — 2026-04-24
+
+### Added
+- **Real-time price quotes**: prices now update every 10 seconds using live market data.
+  Taiwan stocks pull from TWSE `mis.twse.com.tw` (the same source 台新/玉山 Securities
+  display) during trading hours, with Yahoo Finance v7 as fallback when the exchange
+  is closed. Crypto uses Kraken's Ticker endpoint for live last-trade price. US stocks
+  use Yahoo Finance v7 real-time quotes.
+
+### Changed
+- **WebSocket update interval**: reduced from 30 s → 10 s for near-real-time price
+  refresh. OHLCV history (used for MA25/MA60 calculations) is still cached daily —
+  only the displayed price refreshes more frequently.
+
 ## [1.1.1] — 2026-04-24
 
 ### Added
