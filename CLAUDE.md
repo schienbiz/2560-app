@@ -1,3 +1,8 @@
+## Project docs
+
+- [CHANGELOG.md](CHANGELOG.md) — version history and release notes
+- [TODOS.md](TODOS.md) — deferred work items with full context
+
 ## Skill routing
 
 When the user's request matches an available skill, ALWAYS invoke it using the Skill

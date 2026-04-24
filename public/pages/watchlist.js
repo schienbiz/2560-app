@@ -17,11 +17,20 @@ function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+const FS_STORAGE_KEY = "fontSize";
+
+// Encode symbol to a collision-resistant CSS ID: non-alphanumeric chars become _<charCode>_
+// e.g. "BTC/USDT" → "BTC_47_USDT", "2330.TW" → "2330_46_TW"
+function safeId(sym) { return String(sym).replace(/[^a-zA-Z0-9]/g, c => `_${c.charCodeAt(0)}_`); }
+
 // ── WebSocket live-price client ───────────────────────────────────────────────
 
 let _ws = null;
+let _reconnectTimer = null;
 
 function connectWs() {
+  clearTimeout(_reconnectTimer);
+  _reconnectTimer = null;
   if (_ws) { _ws.close(); _ws = null; }
 
   const session = getSession();
@@ -49,7 +58,7 @@ function connectWs() {
     // Reconnect only if watchlist tab is still active
     const page = document.getElementById("page-watchlist");
     if (page?.classList.contains("active")) {
-      setTimeout(connectWs, 5000);
+      _reconnectTimer = setTimeout(connectWs, 5000);
     }
   };
 
@@ -58,10 +67,11 @@ function connectWs() {
 
 function applyPriceUpdate(msg) {
   const sym = msg.symbol;
+  const sid = safeId(sym);
 
-  const priceEl  = document.getElementById(`wl-price-${sym}`);
-  const maEl     = document.getElementById(`wl-ma-${sym}`);
-  const signalEl = document.getElementById(`wl-signal-${sym}`);
+  const priceEl  = document.getElementById(`wl-price-${sid}`);
+  const maEl     = document.getElementById(`wl-ma-${sid}`);
+  const signalEl = document.getElementById(`wl-signal-${sid}`);
 
   if (priceEl && msg.close != null) {
     priceEl.textContent = Number(msg.close).toLocaleString(undefined, { maximumFractionDigits: 4 });
@@ -74,9 +84,15 @@ function applyPriceUpdate(msg) {
     maEl.style.color = above ? "var(--green)" : "var(--red)";
   }
 
-  if (signalEl && msg.signal && msg.signal !== "none") {
-    const isGolden = msg.signal === "golden_cross";
-    signalEl.innerHTML = `<span class="badge ${isGolden ? "green" : "red"}">${isGolden ? "▲ 黃金交叉" : "▼ 死亡交叉"}</span>`;
+  if (signalEl) {
+    if (msg.signal === "golden_cross") {
+      signalEl.innerHTML = `<span class="badge green">▲ 黃金交叉</span>`;
+    } else if (msg.signal === "death_cross") {
+      signalEl.innerHTML = `<span class="badge red">▼ 死亡交叉</span>`;
+    } else if (msg.signal != null) {
+      // "none" or any unrecognized value → reset to neutral
+      signalEl.innerHTML = BADGE_NONE;
+    }
   }
 }
 
@@ -103,11 +119,31 @@ function strategyIntroCard() {
   `;
 }
 
+const BADGE_NONE = `<span class="badge muted">無訊號</span>`;
+
+const FS_CYCLE = ["sm", "md", "lg"];
+const FS_LABEL = { sm: "A⁻", md: "A", lg: "A⁺" };
+
+function currentFs() {
+  const v = localStorage.getItem(FS_STORAGE_KEY);
+  return FS_CYCLE.includes(v) ? v : "md";
+}
+
+function applyFs(fs) {
+  if (!FS_LABEL[fs]) return;
+  document.documentElement.dataset.fs = fs;
+  localStorage.setItem(FS_STORAGE_KEY, fs);
+  const btn = document.getElementById("wl-fs-btn");
+  if (btn) btn.textContent = FS_LABEL[fs];
+}
+
 export async function renderWatchlist(container) {
+  const fs = currentFs();
   container.innerHTML = `
     <div class="row" style="margin-bottom:16px">
       <h2 style="margin:0">自選清單</h2>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn secondary" id="wl-fs-btn" style="padding:6px 10px;font-size:13px;min-height:36px" title="字體大小">${FS_LABEL[fs]}</button>
         <button class="btn secondary" id="wl-scan-btn" style="padding:8px 12px">⚡ 掃描</button>
         <button class="btn secondary" id="wl-add-btn" style="padding:8px 12px">＋ 新增</button>
       </div>
@@ -116,6 +152,14 @@ export async function renderWatchlist(container) {
     <div id="wl-scan-results"></div>
     <div id="wl-list"><div class="empty"><div class="spinner"></div></div></div>
   `;
+
+  const fsBtn = document.getElementById("wl-fs-btn");
+  if (fsBtn) {
+    fsBtn.addEventListener("click", () => {
+      const idx = FS_CYCLE.indexOf(currentFs());
+      applyFs(FS_CYCLE[(idx + 1) % FS_CYCLE.length]);
+    });
+  }
 
   const closeBtn = document.getElementById("wl-intro-close");
   if (closeBtn) {
@@ -174,7 +218,7 @@ async function loadList(container) {
 
 function renderRow(item) {
   const sig = item.lastSignal;
-  let badge = `<span class="badge muted">無訊號</span>`;
+  let badge = BADGE_NONE;
   if (sig?.signal === "golden_cross") {
     badge = `<span class="badge green">▲ 黃金交叉</span>`;
   } else if (sig?.signal === "death_cross") {
@@ -182,25 +226,30 @@ function renderRow(item) {
   }
 
   const displayName = esc(item.label || item.symbol);
+  const sid = safeId(item.symbol);
   const sigDate = sig?.signal_date
-    ? `<span class="text-sm text-muted">${String(sig.signal_date).slice(0, 10)}</span>`
+    ? `<div class="text-sm text-muted" style="margin-top:2px">${esc(String(sig.signal_date).slice(0, 10))}</div>`
     : "";
 
   return `
-    <div class="card wl-row" data-symbol="${item.symbol}" style="cursor:pointer">
-      <div class="row">
-        <div>
-          <div style="font-weight:700;font-size:16px">${displayName}${item.label ? `<span class="text-sm text-muted" style="font-weight:400;margin-left:6px">${esc(item.symbol)}</span>` : ""}</div>
+    <div class="card wl-row" data-symbol="${esc(item.symbol)}" style="cursor:pointer;padding:12px 14px">
+      <div class="row" style="align-items:flex-start">
+        <div style="flex:1;min-width:0;margin-right:8px">
+          <div style="font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${displayName}${item.label ? `<span class="text-sm text-muted" style="font-weight:400;margin-left:6px">${esc(item.symbol)}</span>` : ""}
+          </div>
           <div style="display:flex;gap:8px;margin-top:3px;align-items:center">
-            <span id="wl-price-${item.symbol}" class="text-sm" style="color:var(--muted)">—</span>
-            <span id="wl-ma-${item.symbol}" class="text-sm"></span>
+            <span id="wl-price-${sid}" class="text-sm" style="color:var(--muted)">—</span>
+            <span id="wl-ma-${sid}" class="text-sm"></span>
           </div>
           ${sigDate}
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span id="wl-signal-${item.symbol}">${badge}</span>
-          <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" style="padding:6px 10px;font-size:14px" title="設定">⚙</button>
-          <button class="btn danger wl-delete" data-id="${item.id}" style="padding:6px 10px;font-size:12px">移除</button>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
+          <span id="wl-signal-${sid}">${badge}</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
+            <button class="btn danger wl-delete" data-id="${item.id}" style="padding:5px 9px;font-size:12px;min-height:34px">移除</button>
+          </div>
         </div>
       </div>
     </div>
@@ -264,7 +313,7 @@ function renderScanRow(item) {
     `;
   }
 
-  let badge = `<span class="badge muted">無訊號</span>`;
+  let badge = BADGE_NONE;
   if (item.signal === "golden_cross") badge = `<span class="badge green">▲ 黃金交叉</span>`;
   if (item.signal === "death_cross")  badge = `<span class="badge red">▼ 死亡交叉</span>`;
 
