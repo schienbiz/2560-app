@@ -21,6 +21,7 @@
       --yellow:   #ffd600;
       --blue:     #2979ff;
       --tab-h:    56px;
+      --safe-t:   env(safe-area-inset-top, 0px);
       --safe-b:   env(safe-area-inset-bottom, 0px);
     }
 
@@ -47,6 +48,7 @@
       flex: 1;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
+      padding-top: var(--safe-t);
       padding-bottom: calc(var(--tab-h) + var(--safe-b) + 8px);
     }
 
