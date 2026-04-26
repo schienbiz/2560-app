@@ -14,6 +14,7 @@ import { getAdapter } from "../adapters/index.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { computeMA, analyzeSymbol } from "../engine/index.js"
 import { computeSR } from "../engine/sr.js"
+import { computeStructure } from "../engine/structure.js"
 import type { ChartData } from "../engine/types.js"
 
 export const chartRouter = new Hono()
@@ -40,7 +41,8 @@ chartRouter.get("/chart/:symbol", async c => {
     const ma60   = computeMA(closes, 60)
     const result = analyzeSymbol(ohlcv)
 
-    const sr = computeSR(ohlcv)
+    const sr      = computeSR(ohlcv)
+    const struct  = computeStructure(ohlcv, ma25, ma60)
 
     const data: ChartData = {
       symbol:      normalizedSymbol,
@@ -55,7 +57,7 @@ chartRouter.get("/chart/:symbol", async c => {
       resistance:  sr.resistance,
     }
 
-    return c.json(data)
+    return c.json({ ...data, swings: struct.swings })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(`[chart] ${symbol}:`, message)
