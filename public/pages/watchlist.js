@@ -247,7 +247,7 @@ function renderRow(item) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
           <span id="wl-signal-${sid}">${badge}</span>
           <div style="display:flex;gap:6px">
-            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
+            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
             <button class="btn danger wl-delete" data-id="${item.id}" style="padding:5px 9px;font-size:12px;min-height:34px">移除</button>
           </div>
         </div>
@@ -349,8 +349,16 @@ function renderScanRow(item) {
 // ── Settings sheet ───────────────────────────────────────────────────────────
 
 function openSettingsSheet(dataset, container) {
-  const { id, symbol, label, onGolden, onDeath, active } = dataset;
+  const { id, symbol, label, onGolden, onDeath, active, proximityThreshold, ma25 } = dataset;
   const checked = (val) => val === "true" ? "checked" : "";
+  const thresholdPct = (parseFloat(proximityThreshold) * 100).toFixed(1);
+  const goldenIsOn   = onGolden === "true";
+
+  // Price context: if MA25 is known, show what the % means in absolute terms
+  const ma25Val = parseFloat(ma25);
+  const priceContextHint = (ma25Val > 0)
+    ? `目前等於 MA25 ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(thresholdPct) / 100).toFixed(2)}`
+    : "";
 
   openSheet(`
     <h3>⚙ ${esc(symbol)} 設定</h3>
@@ -374,14 +382,47 @@ function openSettingsSheet(dataset, container) {
         <input type="checkbox" id="settings-active" ${checked(active)} />
       </label>
     </div>
+    <div class="divider"></div>
+    <div id="settings-proximity-section" style="opacity:${goldenIsOn ? 1 : 0.4};transition:opacity .2s">
+      <label style="margin-bottom:8px;display:block">接近 MA25 警示門檻
+        <span class="text-sm text-muted">（黃金交叉通知啟用時有效）</span>
+      </label>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <span class="text-sm text-muted">${priceContextHint}</span>
+        <span id="settings-threshold-display" style="font-weight:600;color:var(--blue)">${thresholdPct}%</span>
+      </div>
+      <input type="range" id="settings-threshold" min="0.1" max="5" step="0.1" value="${thresholdPct}"
+        style="width:100%" ${goldenIsOn ? "" : "disabled"} />
+      <div class="text-sm text-muted" style="margin-top:4px">價格距 MA25 在此範圍內時觸發（預設 1.5%）</div>
+    </div>
     <button class="btn primary full" id="settings-save" style="margin-top:16px">儲存</button>
   `);
+
+  document.getElementById("settings-threshold").addEventListener("input", (e) => {
+    const pct = parseFloat(e.target.value).toFixed(1);
+    document.getElementById("settings-threshold-display").textContent = pct + "%";
+    if (priceContextHint && ma25Val > 0) {
+      // Update price context hint live as slider moves
+      const section = document.getElementById("settings-proximity-section");
+      const hint = section?.querySelector(".text-sm.text-muted");
+      if (hint) hint.textContent = `目前等於 MA25 ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(pct) / 100).toFixed(2)}`;
+    }
+  });
+
+  // Golden toggle gates the proximity slider
+  document.getElementById("settings-golden").addEventListener("change", (e) => {
+    const section = document.getElementById("settings-proximity-section");
+    const slider  = document.getElementById("settings-threshold");
+    if (section) section.style.opacity = e.target.checked ? "1" : "0.4";
+    if (slider)  slider.disabled = !e.target.checked;
+  });
 
   document.getElementById("settings-save").addEventListener("click", async () => {
     const newLabel = document.getElementById("settings-label-input").value.trim();
     const newGolden = document.getElementById("settings-golden").checked;
     const newDeath = document.getElementById("settings-death").checked;
     const newActive = document.getElementById("settings-active").checked;
+    const newThreshold = parseFloat(document.getElementById("settings-threshold").value) / 100;
 
     const btn = document.getElementById("settings-save");
     btn.disabled = true;
@@ -391,9 +432,10 @@ function openSettingsSheet(dataset, container) {
       await Promise.all([
         api.put(`/api/watchlist/${id}`, { label: newLabel || null }),
         api.put(`/api/watchlist/${id}/alert`, {
-          on_golden: newGolden,
-          on_death:  newDeath,
-          active:    newActive,
+          on_golden:           newGolden,
+          on_death:            newDeath,
+          active:              newActive,
+          proximity_threshold: newThreshold,
         }),
       ]);
       closeSheet();

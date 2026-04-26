@@ -1,0 +1,15 @@
+name: Daily outcome computation
+
+on:
+  schedule:
+    - cron: "0 10 * * *"    # 6:00pm Taipei (UTC+8) — after scan + OHLCV cache is warm
+  workflow_dispatch:          # manual trigger for testing
+
+jobs:
+  outcome:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger outcome cron
+        run: |
+          curl -f --max-time 60 -X POST "${{ secrets.APP_URL }}/internal/outcome" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

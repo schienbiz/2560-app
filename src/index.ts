@@ -61,6 +61,16 @@ app.post("/internal/morning-summary", async c => {
   return c.json({ ok: true })
 })
 
+app.post("/internal/outcome", async c => {
+  const secret = c.req.header("x-internal-secret")
+  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+    return c.json({ error: "Forbidden" }, 403)
+  }
+  const { runOutcome } = await import("../cron/outcome.js")
+  runOutcome().catch(err => console.error("Outcome cron error:", err))
+  return c.json({ ok: true })
+})
+
 // ─── Frontend config (injects env vars as JS globals) ────────────────────────
 app.get("/config.js", c => {
   const liffId = process.env.LIFF_ID ?? ""
