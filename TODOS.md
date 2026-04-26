@@ -5,24 +5,6 @@ actionable 3 months from now, not just a vague bullet.
 
 ---
 
-## Configurable proximity threshold per-symbol
-
-**What:** Replace the hardcoded `PROXIMITY_THRESHOLD = 0.015` in `cron/scan.ts` with a
-per-symbol threshold stored in `WatchlistAlert` and configurable from the Reminders tab UI.
-
-**Why:** 1.5% is a starting point. After a week of real data you'll know if it's too tight
-(no alerts) or too loose (too many). Right now tuning requires a code edit + redeploy.
-
-**Pros:** No redeploy needed to tune. Per-symbol granularity (crypto vs TW stocks move differently).
-**Cons:** Prisma migration required (new Float field on WatchlistAlert). UI input in Reminders tab.
-
-**Context:** Skipped in CEO plan 2026-04-22. Start at 1.5% hardcoded. Revisit after 1 week
-of proximity alert data. Build after you've seen which symbols fire too much/too little.
-
-**Depends on:** Proximity alert working in production (v1 of AI watchdog shipped)
-
----
-
 ## Intraday proximity alerts
 
 **What:** Move from daily-close price checks to intraday WebSocket price feed. Alert the moment
@@ -40,26 +22,6 @@ or a different hosting model (Fly.io, Railway, or a dedicated WebSocket server).
 first. Revisit once the app has regular users and the daily-close pattern is validated.
 
 **Depends on:** Daily-close proximity alert live + validated; hosting upgrade decision
-
----
-
-## Alert history: outcome tracking
-
-**What:** Extend the alert history log (coming in v1 AI watchdog) with outcome tracking. After
-each proximity/cross alert, did price move in the predicted direction? Show: "5 days after this
-proximity alert, the stock was +4.2%".
-
-**Why:** Turns the alert history from a log into a feedback loop. You can see whether the
-2560戰法 proximity signals are actually accurate in practice.
-
-**Pros:** Closes the strategy-verification loop. Differentiates from any off-the-shelf signal tool.
-**Cons:** Requires knowing the "target" (entry at close on alert day, evaluate 5/10/20 days later).
-Data is already in TradeRecord — could cross-reference automatically.
-
-**Context:** Deferred from CEO plan 2026-04-22. Alert history UI shipped in v1.1.0 — start the
-clock. Revisit outcome tracking after 2 weeks of real alert data.
-
-**Depends on:** Alert history log in use for at least 2 weeks (shipped v1.1.0 — 2026-04-23)
 
 ---
 
@@ -124,3 +86,47 @@ has a 1-hour TTL but no eviction for entries that are never re-accessed. Revisit
 the user base exceeds 50 concurrent users.
 
 **Depends on:** Multi-user launch (Scope deferred in CEO plan — community validation first)
+
+---
+
+## DESIGN.md — living design spec
+
+**What:** Create a `DESIGN.md` in the repo root that documents the app's design system:
+color tokens (`--green`, `--red`, `--yellow`, `--blue`, `--muted`), component classes
+(`.badge`, `.badge-compact`, `.btn`, `.card`, `.stat-card`, `.sheet`), spacing scale,
+and interaction patterns (toast, bottom sheet, tab navigation).
+
+**Why:** Every session re-derives the same design rules from `index.html`. A spec
+reduces AI drift (badge-compact vs inline styles, danger vs muted color semantics)
+and makes onboarding faster if collaborators join.
+
+**Pros:** Faster future sessions. Prevents design system drift. Single source of truth
+for component classes and color usage.
+**Cons:** Maintenance overhead — needs to stay in sync with `index.html` changes.
+
+**Context:** Surfaced during /plan-design-review on 2026-04-26 (3-feature batch: swing
+markers, outcome tracking, per-symbol proximity threshold). Not blocking any feature work —
+write it during a quiet session before the next major UI expansion.
+
+**Depends on:** Nothing — standalone doc task
+
+---
+
+## Completed
+
+### Configurable proximity threshold per-symbol
+**Completed:** v1.2.0 (2026-04-26)
+
+Per-symbol `proximity_threshold` field added to `WatchlistAlert` (Prisma migration
+`20260426060723`). `cron/scan.ts` reads per-alert value with 1.5% default fallback.
+Settings sheet in watchlist UI exposes a slider (0.5%–10%) with live MA25 ± N
+absolute-price context hint. Slider grayed when golden cross notifications are off.
+
+### Alert history: outcome tracking
+**Completed:** v1.2.0 (2026-04-26)
+
+`cron/outcome.ts` computes 5d/10d/20d % returns for `golden_cross`/`death_cross`
+signals after a 10-day eligibility window, looking up `OhlcvCache` for price at
++7/+14/+28 calendar days. Results written back to `SignalHistory` fields
+`outcome_5d`, `outcome_10d`, `outcome_20d`. Displayed as `.badge-compact` rows in
+the signal history card. Daily GitHub Actions cron at 18:00 Taipei time.

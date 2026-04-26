@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.2.0] — 2026-04-26
+
+### Added
+- **Swing point markers on chart**: the chart now shows the last 4 swing structure
+  points (HH = Higher High, HL = Higher Low, LH = Lower High, LL = Lower Low) as
+  colored arrows. Tap the "擺動結構" toggle button to show/hide. Uptrend structure
+  (HH/HL chain) shows in green; downtrend (LH/LL chain) in red. A legend inside the
+  analysis card explains the notation.
+- **Signal outcome tracking**: each golden/death cross in the alert history now shows
+  its actual % return at 5, 10, and 20 trading days after the signal. While the result
+  is being calculated, a "結果計算中" note appears. A daily GitHub Actions cron job
+  (`outcome.yml`) computes outcomes automatically and writes them back to the database.
+- **Per-symbol proximity threshold**: the proximity alert (how close price must get to
+  MA25 to trigger) is now configurable per symbol. Open the settings sheet from the
+  watchlist and use the slider (0.5% – 10%). Shows a live hint in absolute price terms
+  (e.g., "目前等於 MA25 185.00 ± 2.78"). The slider is disabled when golden cross
+  notifications are off since proximity alerts only apply to the golden cross flow.
+- **Price action structure engine** (`src/engine/structure.ts`): detects pivot highs/lows,
+  labels swing structure (HH/HL/LH/LL), classifies trend phase (impulse_up,
+  impulse_down, correction, range), computes ATR(14), and determines bias
+  (bullish/bearish/neutral). Used to ground the 5-point AI analysis in actual price
+  structure rather than only MA crossover wording.
+
+### Changed
+- **AI analysis upgraded to structured 5-point format**: the Groq prompt now receives
+  recent 15 candles, swing structure, and current trend phase, producing five distinct
+  analysis points per symbol.
+- **Design system additions**: new `.badge-compact` CSS class for dense inline badges;
+  cross-browser range slider styling (`-webkit-slider-thumb`, `-moz-range-thumb`).
+- **Outcome badge formatting**: badges use consistent `+/-` sign notation and the shared
+  `.badge-compact` class rather than ad-hoc inline styles.
+
 ## [1.1.2] — 2026-04-24
 
 ### Added
