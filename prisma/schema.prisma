@@ -49,13 +49,14 @@ model Watchlist {
 
 // ─── Signal alert settings per watchlist item ────────────────────────────────
 model WatchlistAlert {
-  id           String    @id @default(cuid())
-  watchlist_id String    @unique
-  watchlist    Watchlist @relation(fields: [watchlist_id], references: [id], onDelete: Cascade)
+  id                  String    @id @default(cuid())
+  watchlist_id        String    @unique
+  watchlist           Watchlist @relation(fields: [watchlist_id], references: [id], onDelete: Cascade)
 
-  on_golden    Boolean   @default(true)
-  on_death     Boolean   @default(true)
-  active       Boolean   @default(true)
+  on_golden           Boolean   @default(true)
+  on_death            Boolean   @default(true)
+  active              Boolean   @default(true)
+  proximity_threshold Float     @default(0.015)
 }
 
 // ─── Manual "remind me to check this symbol on date X" ───────────────────────
@@ -75,16 +76,20 @@ model RemindMe {
 
 // ─── Global signal history (not per-user) ────────────────────────────────────
 model SignalHistory {
-  id          String     @id @default(cuid())
-  symbol      String
-  asset_type  AssetType
-  signal      SignalType
-  signal_date DateTime
-  close_price Float
-  ma25        Float
-  ma60        Float
-  confidence  String     // "high" | "medium" | "low"
-  created_at  DateTime   @default(now())
+  id                   String     @id @default(cuid())
+  symbol               String
+  asset_type           AssetType
+  signal               SignalType
+  signal_date          DateTime
+  close_price          Float
+  ma25                 Float
+  ma60                 Float
+  confidence           String     // "high" | "medium" | "low"
+  outcome_5d           Float?     // % change 5 trading days after signal
+  outcome_10d          Float?     // % change 10 trading days after signal
+  outcome_20d          Float?     // % change 20 trading days after signal
+  outcome_computed_at  DateTime?
+  created_at           DateTime   @default(now())
 
   trades      TradeRecord[]
 
