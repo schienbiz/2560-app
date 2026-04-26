@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0] — 2026-04-27
+
+### Added
+- **Signal Pulse public page** (`/pulse`): a public, no-login page showing the top-watched
+  symbols across all app users, their current MA25/MA60 signal status, watcher count, and
+  latest closing price. Requires ≥2 watchers per symbol to appear (privacy threshold). Updates
+  live on each request with a 60-second server-side cache and `Cache-Control: public, max-age=60`.
+- **Share button per symbol row**: tap 分享 to send a pre-written LINE message via
+  `navigator.share()`, with clipboard fallback and a "已複製！" toast for older browsers.
+- **UTM acquisition tracking**: LINE and Telegram CTA links carry `?ref=ptt` and `?ref=line`
+  params so you can measure which channel drives signups after posting on PTT or LINE groups.
+
 ## [1.2.0] — 2026-04-26
 
 ### Added

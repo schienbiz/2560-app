@@ -9,6 +9,7 @@ import { aiRouter }        from "./routes/ai.js"
 import { signalsRouter }   from "./routes/signals.js"
 import { handleLineWebhook }     from "./webhooks/line.js"
 import { handleTelegramWebhook } from "./webhooks/telegram.js"
+import { pulseRouter }           from "./routes/pulse.js"
 
 const app = new Hono()
 
@@ -78,6 +79,9 @@ app.get("/config.js", c => {
   c.header("Cache-Control", "no-cache")
   return c.body(`window.__LIFF_ID__ = ${JSON.stringify(liffId)};`)
 })
+
+// ─── Public pages (no auth — must be BEFORE serveStatic catch-all) ───────────
+app.route("/pulse", pulseRouter)
 
 // ─── Static frontend ─────────────────────────────────────────────────────────
 app.use("/*", serveStatic({ root: "./public" }))

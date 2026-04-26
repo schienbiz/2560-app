@@ -112,6 +112,42 @@ write it during a quiet session before the next major UI expansion.
 
 ---
 
+## Social Layer v2 — In-app Watcher Count (Approach B)
+
+**What:** Add "N other users watching this symbol" to each watchlist card in the authenticated app UI.
+Show watcher count as a small badge on the symbol row. Pull from the same `WatchlistAlert groupBy`
+query used by the Signal Pulse page. Opt-in: only count users who have joined with at least one
+active watchlist alert.
+
+**Why:** Signal Pulse (v1.3.0) validated that users want to know who else is watching the same
+symbols. Approach B brings that answer *into* the authenticated experience — not just on the public
+page. Knowing "8 others watching TSMC at MA25 proximity" at the moment the alert fires dramatically
+increases conviction to act. This is the confidence amplifier feature.
+
+**Build gate:** Only start Approach B after Signal Pulse clears its validation gate:
+- ≥5 genuine replies to the PTT demand test post (posted after PR #5 merges)
+- AND ≥10 new signups from the Signal Pulse public page within 48h of going live
+
+**Architecture (pre-specced, ready to implement):**
+- No schema change needed. Reuse `WatchlistAlert` groupBy query from Signal Pulse.
+- Add a `getWatcherCounts()` function to a shared service (e.g., `src/services/watchlist.ts`).
+  Cache counts in-memory for 5 minutes (longer than Signal Pulse's 60s — auth app has fewer page loads).
+- In the watchlist API response, join watcher count per symbol.
+- In `public/pages/watchlist.js`, render a small badge: `<span class="badge-compact">👥 N</span>`
+  if count ≥ 2. Hide if count = 1 (would reveal only 1 user watches it).
+
+**Pros:** Delivers the core social value ("am I seeing this the same way as other disciplined traders?")
+directly in the tool where users act on signals.
+**Cons:** Only meaningful once there are ≥5 active users with overlapping watchlists. At 1-2 users,
+all counts will be 1 and hidden — the feature is invisible. Don't ship until there's enough activity.
+
+**Context:** Designed during CEO plan 2026-04-26 as the validated follow-on to Signal Pulse.
+/office-hours session identified "who else is watching" as the core social demand signal.
+
+**Depends on:** Signal Pulse (v1.3.0) validation gate: ≥5 PTT replies AND ≥10 new signups
+
+---
+
 ## Completed
 
 ### Configurable proximity threshold per-symbol
