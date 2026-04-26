@@ -8,6 +8,12 @@
 import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet, navigate } from "../app.js";
 
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 let chartInstance = null;
 let chartResizeObserver = null;
 let currentSymbol = null;
@@ -19,7 +25,7 @@ export async function renderChart(container, params = {}) {
     <div class="row" style="margin-bottom:12px">
       <h2 style="margin:0">圖表</h2>
       <div style="display:flex;gap:8px">
-        <input id="chart-symbol-input" placeholder="輸入代碼" value="${symbol}"
+        <input id="chart-symbol-input" placeholder="輸入代碼" value="${esc(symbol)}"
           style="width:120px;padding:8px 10px;font-size:13px" autocapitalize="characters"/>
         <button class="btn primary" id="chart-load-btn" style="padding:8px 14px">查詢</button>
       </div>
@@ -38,7 +44,10 @@ export async function renderChart(container, params = {}) {
         <button class="btn secondary" id="chart-add-trade-btn" style="flex:1">＋ 記錄交易</button>
         <button class="btn secondary" id="chart-add-reminder-btn" style="flex:1">🔔 設定提醒</button>
       </div>
-      <button class="btn secondary" id="chart-ai-btn" style="width:100%;margin-top:8px;color:var(--blue)">✦ AI 分析</button>
+      <div class="row" style="margin-top:8px;gap:8px">
+        <button class="btn secondary" id="chart-ai-btn" style="flex:1;color:var(--blue)">✦ AI 分析</button>
+        <button class="btn secondary" id="chart-swing-toggle-btn" style="display:none;flex:0 0 auto;font-size:12px;padding:10px 12px">擺動結構 ON</button>
+      </div>
     </div>
 
     <div id="chart-loading" style="display:none">
@@ -106,13 +115,32 @@ async function loadChart(rawSymbol) {
     analysisEl.style.display = "block";
     actionsEl.style.display  = "block";
 
+    // Swing toggle button (only relevant when swings exist)
+    if (data.swings?.length) {
+      const swingToggleBtn = document.getElementById("chart-swing-toggle-btn");
+      if (swingToggleBtn) {
+        const isOn = localStorage.getItem("showSwings") !== "false";
+        swingToggleBtn.textContent = isOn ? "擺動結構 ON" : "擺動結構 OFF";
+        swingToggleBtn.style.color = isOn ? "var(--blue)" : "var(--muted)";
+        swingToggleBtn.style.display = "block";
+        swingToggleBtn.onclick = () => {
+          const nowOn = localStorage.getItem("showSwings") !== "false";
+          localStorage.setItem("showSwings", nowOn ? "false" : "true");
+          buildChart(chartEl, data);
+          const next = !nowOn;
+          swingToggleBtn.textContent = next ? "擺動結構 ON" : "擺動結構 OFF";
+          swingToggleBtn.style.color = next ? "var(--blue)" : "var(--muted)";
+        };
+      }
+    }
+
     document.getElementById("chart-add-trade-btn").onclick = () => openAddTradeSheet(symbol, data);
     document.getElementById("chart-add-reminder-btn").onclick = () => openAddReminderSheet(symbol);
     document.getElementById("chart-ai-btn").onclick = () => runAiAnalysis(symbol, aiEl);
   } catch (err) {
     loadingEl.style.display = "none";
     const msg = err instanceof ApiError && err.status === 404
-      ? `找不到「${symbol}」，請確認代碼`
+      ? `找不到「${esc(symbol)}」，請確認代碼`
       : "資料載入失敗，請稍後再試";
     errorEl.innerHTML = `<div class="empty">${msg}</div>`;
     errorEl.style.display = "block";
@@ -254,6 +282,11 @@ function renderAnalysisCard(el, data, barsAgo) {
             <span style="color:var(--text)">理想進場區</span>　MA25 ±1%，趨勢剛確立時的低風險進場範圍<br>
             <span style="color:var(--text)">策略停損</span>　MA60 數值，2560 戰法以此作為多方格局的支撐下限
           </div>
+          <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
+            <span style="color:var(--text)">擺動結構標記</span>
+            <span style="color:var(--green);font-weight:600">↑HH</span>＝更高高點　<span style="color:rgba(105,240,174,1);font-weight:600">↓HL</span>＝更高低點<br>
+            <span style="color:var(--red);font-weight:600">↑LH</span>＝更低高點　<span style="color:rgba(255,82,82,1);font-weight:600">↓LL</span>＝更低低點　連續 HH/HL = 多方結構，LH/LL = 空方結構
+          </div>
         </div>
       </div>
     </div>
@@ -298,6 +331,22 @@ function buildChart(el, data) {
     open: b.open, high: b.high, low: b.low, close: b.close,
   }));
   candles.setData(ohlcv);
+
+  // Swing point markers (HH / HL / LH / LL) — toggled via localStorage
+  if (data.swings?.length && localStorage.getItem("showSwings") !== "false") {
+    const SWING_STYLE = {
+      HH: { position: "aboveBar", color: "#00c853", shape: "arrowUp",   text: "HH" },
+      HL: { position: "belowBar", color: "#69f0ae", shape: "arrowDown",  text: "HL" },
+      LH: { position: "aboveBar", color: "#ff5252", shape: "arrowUp",   text: "LH" },
+      LL: { position: "belowBar", color: "#ff1744", shape: "arrowDown",  text: "LL" },
+    };
+    const markers = data.swings.slice(-4).map(s => ({
+      time:     s.date,
+      ...SWING_STYLE[s.label],
+      size:     1,
+    })).sort((a, b) => (a.time < b.time ? -1 : 1));
+    candles.setMarkers(markers);
+  }
 
   // MA25 line — parallel array, zip with dates
   if (data.ma25?.length) {
@@ -363,7 +412,7 @@ function openAddTradeSheet(symbol, data) {
   const today = taipeiToday();
 
   openSheet(`
-    <h3>記錄交易 — ${symbol}</h3>
+    <h3>記錄交易 — ${esc(symbol)}</h3>
     <div class="field">
       <label>方向</label>
       <select id="trade-direction">
@@ -430,7 +479,7 @@ function openAddReminderSheet(symbol) {
   const tomorrow = d.toISOString().slice(0, 10);
 
   openSheet(`
-    <h3>設定提醒 — ${symbol}</h3>
+    <h3>設定提醒 — ${esc(symbol)}</h3>
     <div class="field">
       <label>提醒日期</label>
       <input type="date" id="remind-date" value="${tomorrow}" />

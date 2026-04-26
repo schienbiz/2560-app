@@ -115,6 +115,28 @@ function renderSignalRow(s) {
   const dateStr = String(s.signal_date).slice(0, 10);
   const conf    = s.confidence === "high" ? " 高信心度" : s.confidence === "medium" ? " 中信心度" : "";
 
+  function outcomeBadge(pct, label) {
+    if (pct == null) return "";
+    const color = pct >= 0 ? "var(--green)" : "var(--red)";
+    const sign  = pct >= 0 ? "+" : "";
+    return `<span class="badge-compact" style="color:${color}">${label} ${sign}${pct.toFixed(1)}%</span>`;
+  }
+
+  const hasCrossSignal = (s.signal === "golden_cross" || s.signal === "death_cross");
+  const hasAnyOutcome  = (s.outcome_5d != null || s.outcome_10d != null || s.outcome_20d != null);
+  const signalAgeMs    = Date.now() - new Date(s.signal_date).getTime();
+  const isPending      = hasCrossSignal && !hasAnyOutcome && signalAgeMs < 28 * 24 * 60 * 60 * 1000;
+
+  const outcomes = hasAnyOutcome
+    ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px">
+        ${outcomeBadge(s.outcome_5d, "5天")}
+        ${outcomeBadge(s.outcome_10d, "10天")}
+        ${outcomeBadge(s.outcome_20d, "20天")}
+       </div>`
+    : isPending
+    ? `<div class="text-sm text-muted" style="margin-top:4px;font-style:italic">結果計算中 · 訊號後 5–10 交易日更新</div>`
+    : "";
+
   return `
     <div class="card">
       <div class="row">
@@ -122,13 +144,14 @@ function renderSignalRow(s) {
           <span style="font-weight:700">${esc(s.symbol)}</span>
           <span style="margin-left:6px">${icon} ${text}${conf}</span>
         </div>
-        <span class="text-sm text-muted">${dateStr}</span>
+        <span class="text-sm text-muted">${esc(dateStr)}</span>
       </div>
       <div class="text-sm text-muted" style="margin-top:4px">
         收盤 ${s.close_price?.toLocaleString() ?? "—"}
         ・MA25 ${s.ma25?.toFixed(2) ?? "—"}
         ・MA60 ${s.ma60?.toFixed(2) ?? "—"}
       </div>
+      ${outcomes}
     </div>
   `;
 }
