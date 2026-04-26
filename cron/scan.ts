@@ -119,7 +119,7 @@ export async function runScan() {
         if (ma25Last && ma60Last && ma25Last > ma60Last && alert.on_golden) {
           const priceDist = Math.abs(latest.close - ma25Last) / ma25Last
 
-          if (priceDist <= PROXIMITY_THRESHOLD) {
+          if (priceDist <= (alert.proximity_threshold ?? PROXIMITY_THRESHOLD)) {
             const today = new Date()
             today.setHours(0, 0, 0, 0)
 

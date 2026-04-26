@@ -103,9 +103,10 @@ watchlistRouter.put("/:id", zValidator("json", updateSchema), async c => {
 
 // PUT /api/watchlist/:id/alert
 const alertSchema = z.object({
-  on_golden: z.boolean().optional(),
-  on_death:  z.boolean().optional(),
-  active:    z.boolean().optional(),
+  on_golden:           z.boolean().optional(),
+  on_death:            z.boolean().optional(),
+  active:              z.boolean().optional(),
+  proximity_threshold: z.number().min(0.001).max(0.1).optional(),
 })
 
 watchlistRouter.put("/:id/alert", zValidator("json", alertSchema), async c => {
