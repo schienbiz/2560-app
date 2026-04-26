@@ -104,7 +104,7 @@ async function shareSymbol(symbol, signal, count) {
 
 function renderPage(rows: PulseRow[]): string {
   const tableRows = rows.length === 0
-    ? `<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:2rem 0">訊號資料每日收盤後更新，稍後再來看看。</td></tr>`
+    ? `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:2rem 0">訊號資料每日收盤後更新，稍後再來看看。</td></tr>`
     : rows.map(r => /* html */`
     <tr>
       <td style="font-weight:600">${escapeHtml(r.symbol)}</td>
