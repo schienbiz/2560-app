@@ -28,14 +28,21 @@ interface TgUpdate  { update_id: number; message?: TgMessage }
 
 // ─── Send message via Bot API ─────────────────────────────────────────────────
 
-async function sendMessage(chatId: number, text: string) {
+const PULSE_URL = "https://two560-app.onrender.com/pulse"
+
+async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    body:    JSON.stringify({
+      chat_id:      chatId,
+      text,
+      parse_mode:   "HTML",
+      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+    }),
   })
 }
 
@@ -67,8 +74,28 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
 
   // Handle /start command
   if (text === "/start") {
-    await sendMessage(chatId,
-      "👋 歡迎使用 2560戰法助理！\n\n你可以問我：\n• 2330 現在可以進場嗎？\n• 我的自選清單有哪些訊號？\n• 黃金交叉是什麼意思？\n\n直接傳訊息就行，不需要特殊指令。"
+    await sendMessage(
+      chatId,
+      "👋 歡迎使用 Two560戰法助理！\n\n你可以問我：\n• 2330 現在可以進場嗎？\n• 我的自選清單有哪些訊號？\n• 黃金交叉是什麼意思？\n\n或查看「信號雷達」，看哪些標的正被最多人追蹤。\n\n直接傳訊息就行，不需要特殊指令。",
+      {
+        inline_keyboard: [[
+          { text: "📡 查看信號雷達", web_app: { url: PULSE_URL } },
+        ]],
+      }
+    )
+    return c.json({ ok: true })
+  }
+
+  // Handle /pulse command
+  if (text === "/pulse") {
+    await sendMessage(
+      chatId,
+      "📡 2560信號雷達\n\n追蹤 MA25/MA60 黃金交叉熱門標的，看哪些標的被最多人同時關注：",
+      {
+        inline_keyboard: [[
+          { text: "開啟信號雷達", web_app: { url: PULSE_URL } },
+        ]],
+      }
     )
     return c.json({ ok: true })
   }
