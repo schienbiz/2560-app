@@ -12,7 +12,10 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({
       commands: [
-        { command: "pulse", description: "📡 查看信號雷達 — 熱門追蹤標的" },
+        { command: "追蹤",  description: "加入自選清單並開啟通知，例：/追蹤 2330" },
+        { command: "移除",  description: "移除自選清單標的，例：/移除 2330" },
+        { command: "清單",  description: "查看目前追蹤的所有標的" },
+        { command: "pulse", description: "📡 信號雷達 — 熱門追蹤標的" },
       ],
     }),
   }).catch(() => {/* non-critical */})
