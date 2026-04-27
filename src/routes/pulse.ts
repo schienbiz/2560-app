@@ -172,8 +172,8 @@ function renderPage(rows: PulseRow[]): string {
   <div class="cta">
     <p>想收到這些標的的即時訊號通知？</p>
     <div class="btn-row">
-      <button class="btn btn-line" onclick="openLink('https://line.me/R/ti/p/@2560signal?ref=ptt', false)">加入 LINE 機器人</button>
-      <button class="btn btn-tg"   onclick="openLink('https://t.me/two560_bot?ref=ptt', true)">加入 Telegram</button>
+      <button class="btn btn-line" onclick="openLink('https://line.me/R/ti/p/@2560signal', false)">加入 LINE 機器人</button>
+      <button class="btn btn-tg"   onclick="openLink('https://t.me/two560_bot', true)">加入 Telegram</button>
     </div>
   </div>
 
