@@ -125,6 +125,7 @@ function renderPage(rows: PulseRow[]): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>2560信號雷達</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <style>
     :root {
       --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -141,7 +142,7 @@ function renderPage(rows: PulseRow[]): string {
     .cta { margin-top: 2rem; padding: 1rem; background: var(--surface); border-radius: 12px; border: 1px solid var(--border) }
     .cta p { color: var(--muted); font-size: 0.9rem; margin-bottom: 0.75rem }
     .btn-row { display: flex; gap: 0.75rem; flex-wrap: wrap }
-    .btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; text-decoration: none; font-weight: 500 }
+    .btn { display: inline-block; padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.9rem; text-decoration: none; font-weight: 500; border: none; cursor: pointer }
     .btn-line { background: #06c755; color: #fff }
     .btn-tg   { background: #2aabee; color: #fff }
     #toast { display: none; position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%);
@@ -171,13 +172,31 @@ function renderPage(rows: PulseRow[]): string {
   <div class="cta">
     <p>想收到這些標的的即時訊號通知？</p>
     <div class="btn-row">
-      <a class="btn btn-line" href="https://line.me/R/ti/p/@2560signal?ref=ptt" target="_blank" rel="noopener">加入 LINE 機器人</a>
-      <a class="btn btn-tg"   href="https://t.me/two560bot?ref=ptt"              target="_blank" rel="noopener">加入 Telegram</a>
+      <button class="btn btn-line" onclick="openLink('https://line.me/R/ti/p/@2560signal?ref=ptt', false)">加入 LINE 機器人</button>
+      <button class="btn btn-tg"   onclick="openLink('https://t.me/two560_bot?ref=ptt', true)">加入 Telegram</button>
     </div>
   </div>
 
   <div id="toast">已複製！</div>
   ${shareScript}
+  <script>
+    var tgApp = window.Telegram && window.Telegram.WebApp;
+    if (tgApp) {
+      tgApp.ready();
+      tgApp.expand();
+    }
+    function openLink(url, isTg) {
+      if (tgApp) {
+        if (isTg) {
+          tgApp.openTelegramLink(url);
+        } else {
+          tgApp.openLink(url);
+        }
+      } else {
+        window.open(url, '_blank', 'noopener');
+      }
+    }
+  </script>
 </body>
 </html>`
 }

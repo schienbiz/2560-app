@@ -5,6 +5,19 @@ import { handleWsConnection } from "./src/routes/ws.js"
 
 const port = parseInt(process.env.PORT ?? "3000", 10)
 
+// Register bot commands with Telegram (fire-and-forget on startup)
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/setMyCommands`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({
+      commands: [
+        { command: "pulse", description: "📡 查看信號雷達 — 熱門追蹤標的" },
+      ],
+    }),
+  }).catch(() => {/* non-critical */})
+}
+
 // Start the HTTP server first — serve() returns the underlying http.Server.
 const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`2560-app running on port ${port}`)
