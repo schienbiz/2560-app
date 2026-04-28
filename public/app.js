@@ -28,6 +28,32 @@ const renderers = {
   reminders: renderReminders,
 };
 
+// ── Font size (global, persists across all tabs) ──────────────────
+const FS_CYCLE = ["sm", "md", "lg"];
+const FS_LABEL = { sm: "A⁻", md: "A", lg: "A⁺" };
+
+function currentFs() {
+  const v = localStorage.getItem("fontSize");
+  return FS_CYCLE.includes(v) ? v : "md";
+}
+
+function applyFs(fs) {
+  document.documentElement.dataset.fs = fs;
+  localStorage.setItem("fontSize", fs);
+  const btn = document.getElementById("global-fs-btn");
+  if (btn) btn.textContent = FS_LABEL[fs];
+}
+
+function setupGlobalFsBtn() {
+  const btn = document.getElementById("global-fs-btn");
+  if (!btn) return;
+  btn.textContent = FS_LABEL[currentFs()];
+  btn.addEventListener("click", () => {
+    const idx = FS_CYCLE.indexOf(currentFs());
+    applyFs(FS_CYCLE[(idx + 1) % FS_CYCLE.length]);
+  });
+}
+
 // ── Boot ──────────────────────────────────────────────────────────
 async function boot() {
   try {
@@ -39,6 +65,7 @@ async function boot() {
   }
 
   setupTabs();
+  setupGlobalFsBtn();
 
   // Deep-link: ?symbol=2330.TW navigates directly to chart
   const urlSymbol = new URLSearchParams(window.location.search).get("symbol");

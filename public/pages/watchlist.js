@@ -17,8 +17,6 @@ function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-const FS_STORAGE_KEY = "fontSize";
-
 // Encode symbol to a collision-resistant CSS ID: non-alphanumeric chars become _<charCode>_
 // e.g. "BTC/USDT" → "BTC_47_USDT", "2330.TW" → "2330_46_TW"
 function safeId(sym) { return String(sym).replace(/[^a-zA-Z0-9]/g, c => `_${c.charCodeAt(0)}_`); }
@@ -121,29 +119,11 @@ function strategyIntroCard() {
 
 const BADGE_NONE = `<span class="badge muted">無訊號</span>`;
 
-const FS_CYCLE = ["sm", "md", "lg"];
-const FS_LABEL = { sm: "A⁻", md: "A", lg: "A⁺" };
-
-function currentFs() {
-  const v = localStorage.getItem(FS_STORAGE_KEY);
-  return FS_CYCLE.includes(v) ? v : "md";
-}
-
-function applyFs(fs) {
-  if (!FS_LABEL[fs]) return;
-  document.documentElement.dataset.fs = fs;
-  localStorage.setItem(FS_STORAGE_KEY, fs);
-  const btn = document.getElementById("wl-fs-btn");
-  if (btn) btn.textContent = FS_LABEL[fs];
-}
-
 export async function renderWatchlist(container) {
-  const fs = currentFs();
   container.innerHTML = `
     <div class="row" style="margin-bottom:16px">
       <h2 style="margin:0">自選清單</h2>
       <div style="display:flex;gap:6px;align-items:center">
-        <button class="btn secondary" id="wl-fs-btn" style="padding:6px 10px;font-size:13px;min-height:36px" title="字體大小">${FS_LABEL[fs]}</button>
         <button class="btn secondary" id="wl-scan-btn" style="padding:8px 12px">⚡ 掃描</button>
         <button class="btn secondary" id="wl-add-btn" style="padding:8px 12px">＋ 新增</button>
       </div>
@@ -152,14 +132,6 @@ export async function renderWatchlist(container) {
     <div id="wl-scan-results"></div>
     <div id="wl-list"><div class="empty"><div class="spinner"></div></div></div>
   `;
-
-  const fsBtn = document.getElementById("wl-fs-btn");
-  if (fsBtn) {
-    fsBtn.addEventListener("click", () => {
-      const idx = FS_CYCLE.indexOf(currentFs());
-      applyFs(FS_CYCLE[(idx + 1) % FS_CYCLE.length]);
-    });
-  }
 
   const closeBtn = document.getElementById("wl-intro-close");
   if (closeBtn) {

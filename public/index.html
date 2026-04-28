@@ -2,7 +2,7 @@
 <html lang="zh-TW" style="color-scheme: dark;">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=0.5, maximum-scale=3.0, user-scalable=yes, viewport-fit=cover">
   <title>2560 戰法</title>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="/config.js"></script>
@@ -20,7 +20,7 @@
       --red:      #ff1744;
       --yellow:   #ffd600;
       --blue:     #2979ff;
-      --tab-h:    56px;
+      --tab-h:    62px;
       --safe-t:   env(safe-area-inset-top, 0px);
       --safe-b:   env(safe-area-inset-bottom, 0px);
     }
@@ -32,7 +32,6 @@
       font-family: -apple-system, "Noto Sans TC", sans-serif;
       font-size: 14px;
       line-height: 1.5;
-      overflow: hidden;
     }
 
     /* ── Layout ────────────────────────────────────────────── */
@@ -78,15 +77,15 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 2px;
+      gap: 3px;
       cursor: pointer;
       color: var(--muted);
-      font-size: 10px;
+      font-size: 0.8rem;
       transition: color .15s;
       -webkit-tap-highlight-color: transparent;
     }
     .tab.active { color: var(--blue); }
-    .tab svg { width: 22px; height: 22px; }
+    .tab svg { width: 24px; height: 24px; }
 
     /* ── Common UI ──────────────────────────────────────────── */
     .card {
@@ -101,7 +100,7 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      font-size: 11px;
+      font-size: 0.75rem;
       font-weight: 600;
       padding: 2px 8px;
       border-radius: 100px;
@@ -119,7 +118,7 @@
       padding: 10px 16px;
       border-radius: 8px;
       border: none;
-      font-size: 14px;
+      font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
       transition: opacity .15s;
@@ -139,12 +138,12 @@
       border-radius: 8px;
       color: var(--text);
       padding: 10px 12px;
-      font-size: 14px;
+      font-size: 1rem;
       outline: none;
     }
     input:focus, textarea:focus { border-color: var(--blue); }
 
-    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
 
     .field { margin-bottom: 12px; }
 
@@ -161,16 +160,16 @@
       text-align: center;
       color: var(--muted);
       padding: 48px 24px;
-      font-size: 13px;
+      font-size: 0.9rem;
     }
 
-    h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
-    h3 { font-size: 15px; font-weight: 600; }
+    h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 16px; }
+    h3 { font-size: 1.05rem; font-weight: 600; }
 
     .text-green { color: var(--green); }
     .text-red   { color: var(--red);   }
     .text-muted { color: var(--muted); }
-    .text-sm    { font-size: 12px; }
+    .text-sm    { font-size: 0.85rem; }
 
     /* ── Loading ────────────────────────────────────────────── */
     .spinner {
@@ -194,7 +193,7 @@
       color: #fff;
       padding: 10px 18px;
       border-radius: 20px;
-      font-size: 13px;
+      font-size: 0.9rem;
       z-index: 999;
       opacity: 0;
       transition: opacity .2s;
@@ -239,7 +238,7 @@
       border-radius: 8px;
       padding: 12px;
     }
-    .stat-card .val { font-size: 22px; font-weight: 700; margin-top: 2px; }
+    .stat-card .val { font-size: 1.5rem; font-weight: 700; margin-top: 2px; }
 
     /* ── Toggle ─────────────────────────────────────────────── */
     .toggle-row {
@@ -259,7 +258,7 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 2px 6px;
-      font-size: 11px;
+      font-size: 0.75rem;
       font-weight: 600;
     }
 
@@ -295,6 +294,28 @@
     html[data-fs="sm"] { font-size: 13px; }
     html[data-fs="md"] { font-size: 14px; }
     html[data-fs="lg"] { font-size: 16px; }
+
+    /* ── Global font-size button (always visible, all tabs) ─── */
+    #global-fs-btn {
+      position: fixed;
+      bottom: calc(var(--tab-h) + var(--safe-b) + 10px);
+      right: 10px;
+      z-index: 150;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
   </style>
   <script>
     // Apply saved font size before render to avoid FOUC (targets html element via html[data-fs=...] CSS)
@@ -348,6 +369,7 @@
 </div>
 
 <div id="toast"></div>
+<button id="global-fs-btn" title="字體大小">A</button>
 
 <!-- Bottom sheet (shared) -->
 <div id="sheet-overlay" class="sheet-overlay">
