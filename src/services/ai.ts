@@ -17,7 +17,7 @@ import type { ChartData } from "../engine/types.js"
 import { computeStructure } from "../engine/structure.js"
 
 const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
-const NVIDIA_MODEL = "meta/llama-3.1-70b-instruct"
+const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 const GROQ_MODEL = "llama-3.1-8b-instant"
