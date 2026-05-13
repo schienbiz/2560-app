@@ -37,6 +37,7 @@ interface TgUpdate  { update_id: number; message?: TgMessage }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+const APP_URL   = "https://two560-app.onrender.com"
 const PULSE_URL = "https://two560-app.onrender.com/pulse"
 
 async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
@@ -181,11 +182,12 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
   if (text === "/start") {
     await sendMessage(
       chatId,
-      "👋 歡迎使用 Two560戰法助理！\n\n📊 <b>指令</b>\n/追蹤 &lt;代碼&gt; — 加入自選，收即時通知\n/移除 &lt;代碼&gt; — 移除自選\n/清單 — 查看目前追蹤清單\n/pulse — 信號雷達\n\n💬 也可以直接問我問題：\n• 2330 現在可以進場嗎？\n• 黃金交叉是什麼意思？",
+      "👋 歡迎使用 <b>2560 戰法助理</b>！\n\n追蹤 MA 均線交叉訊號，黃金交叉、死亡交叉、接近進場區時自動通知你。\n\n📊 <b>指令</b>\n/追蹤 &lt;代碼&gt; — 加入自選，收即時通知\n/移除 &lt;代碼&gt; — 移除自選\n/清單 — 查看目前追蹤清單\n\n💬 也可以直接問我問題：\n• 2330 現在可以進場嗎？\n• BTCUSDT 趨勢怎麼看？",
       {
-        inline_keyboard: [[
-          { text: "📡 查看信號雷達", web_app: { url: PULSE_URL } },
-        ]],
+        inline_keyboard: [
+          [{ text: "📈 開啟 2560 App", web_app: { url: APP_URL } }],
+          [{ text: "📡 信號雷達（公開）", web_app: { url: PULSE_URL } }],
+        ],
       }
     )
     return c.json({ ok: true })
@@ -226,7 +228,7 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
   }
 
   // ── AI fallback ─────────────────────────────────────────────────────────────
-  if (!process.env.GROQ_API_KEY) return c.json({ ok: true })
+  if (!process.env.GROQ_API_KEY && !process.env.NVIDIA_API_KEY) return c.json({ ok: true })
 
   // Async — respond before Telegram's 5s timeout
   setImmediate(async () => {
