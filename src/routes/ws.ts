@@ -17,8 +17,9 @@ import type { WebSocket } from "ws"
 import { resolveAuth, type AuthUser } from "../auth.js"
 import { db } from "../db.js"
 import { getAdapter } from "../adapters/index.js"
-import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
-import { analyzeSymbol } from "../engine/index.js"
+import { computeMA } from "../engine/index.js"
+import { scoreSignal } from "../engine/signal.js"
+import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 
 const INTERVAL_MS = 10_000
 
@@ -30,6 +31,7 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
 
   const watchlist = await db.watchlist.findMany({
     where: { user_id: user.userId, platform: user.platform },
+    include: { alert: true },
     orderBy: { created_at: "asc" },
   })
 
@@ -37,14 +39,15 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
     try {
       const { adapter, normalizedSymbol } = getAdapter(item.symbol)
       const assetType = adapter.getAssetType()
+      const fastPeriod = item.alert?.fast_period ?? 25
+      const slowPeriod = item.alert?.slow_period ?? 60
+      const days = fetchDaysFor(slowPeriod, assetType)
 
-      let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 90)
-      if (!ohlcv) {
-        ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 90)
-        await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
-      }
-
-      const result = analyzeSymbol(ohlcv)
+      const ohlcv  = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
+      const closes = ohlcv.map(b => b.close)
+      const maFast = computeMA(closes, fastPeriod)
+      const maSlow = computeMA(closes, slowPeriod)
+      const result = scoreSignal(ohlcv, maFast, maSlow)
       const latest = ohlcv[ohlcv.length - 1]
 
       // Try live quote; fall back to last OHLCV close when unavailable (market closed, etc.)
@@ -55,13 +58,15 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
       }
 
       ws.send(JSON.stringify({
-        type:       "price",
-        symbol:     normalizedSymbol,
-        close:      liveClose,
-        ma25:       result.ma25,
-        ma60:       result.ma60,
-        signal:     result.signal,
-        confidence: result.confidence,
+        type:        "price",
+        symbol:      normalizedSymbol,
+        close:       liveClose,
+        ma25:        maFast[maFast.length - 1] ?? null,
+        ma60:        maSlow[maSlow.length - 1] ?? null,
+        fast_period: fastPeriod,
+        slow_period: slowPeriod,
+        signal:      result.signal,
+        confidence:  result.confidence,
       }))
     } catch {
       // Skip failed symbols — don't kill the whole push cycle.

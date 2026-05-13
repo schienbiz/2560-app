@@ -20,8 +20,10 @@ import type { ChartData } from "../engine/types.js"
 export const chartRouter = new Hono()
 
 chartRouter.get("/chart/:symbol", async c => {
-  const symbol = c.req.param("symbol").toUpperCase()
-  const days   = Math.min(parseInt(c.req.query("days") ?? "90", 10), 365)
+  const symbol     = c.req.param("symbol").toUpperCase()
+  const days       = Math.min(parseInt(c.req.query("days") ?? "90", 10), 365)
+  const fastPeriod = Math.min(Math.max(parseInt(c.req.query("fast_period") ?? "25", 10), 2), 200)
+  const slowPeriod = Math.min(Math.max(parseInt(c.req.query("slow_period") ?? "60", 10), 3), 200)
 
   try {
     const { adapter, normalizedSymbol } = getAdapter(symbol)
@@ -37,8 +39,8 @@ chartRouter.get("/chart/:symbol", async c => {
     }
 
     const closes = ohlcv.map(b => b.close)
-    const ma25   = computeMA(closes, 25)
-    const ma60   = computeMA(closes, 60)
+    const ma25   = computeMA(closes, fastPeriod)
+    const ma60   = computeMA(closes, slowPeriod)
     const result = analyzeSymbol(ohlcv)
 
     const sr      = computeSR(ohlcv)

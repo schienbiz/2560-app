@@ -78,7 +78,9 @@ function applyPriceUpdate(msg) {
 
   if (maEl && msg.ma25 != null && msg.ma60 != null) {
     const above = msg.ma25 > msg.ma60;
-    maEl.textContent = above ? "MA25>MA60" : "MA25<MA60";
+    const fp = msg.fast_period ?? 25;
+    const sp = msg.slow_period ?? 60;
+    maEl.textContent = above ? `MA${fp}>MA${sp}` : `MA${fp}<MA${sp}`;
     maEl.style.color = above ? "var(--green)" : "var(--red)";
   }
 
@@ -219,7 +221,7 @@ function renderRow(item) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
           <span id="wl-signal-${sid}">${badge}</span>
           <div style="display:flex;gap:6px">
-            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
+            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-fast-period="${item.alert?.fast_period ?? 25}" data-slow-period="${item.alert?.slow_period ?? 60}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
             <button class="btn danger wl-delete" data-id="${item.id}" style="padding:5px 9px;font-size:12px;min-height:34px">移除</button>
           </div>
         </div>
@@ -297,10 +299,12 @@ function renderScanRow(item) {
     ? `<span class="text-sm text-muted">${Number(item.close).toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>`
     : "";
 
+  const fp = item.fast_period ?? 25;
+  const sp = item.slow_period ?? 60;
   const ma25above = item.ma25 != null && item.ma60 != null
     ? item.ma25 > item.ma60
-      ? `<span class="text-sm text-green">MA25&gt;MA60</span>`
-      : `<span class="text-sm text-red">MA25&lt;MA60</span>`
+      ? `<span class="text-sm text-green">MA${fp}&gt;MA${sp}</span>`
+      : `<span class="text-sm text-red">MA${fp}&lt;MA${sp}</span>`
     : "";
 
   return `
@@ -321,15 +325,17 @@ function renderScanRow(item) {
 // ── Settings sheet ───────────────────────────────────────────────────────────
 
 function openSettingsSheet(dataset, container) {
-  const { id, symbol, label, onGolden, onDeath, active, proximityThreshold, ma25 } = dataset;
+  const { id, symbol, label, onGolden, onDeath, active, proximityThreshold, fastPeriod, slowPeriod, ma25 } = dataset;
   const checked = (val) => val === "true" ? "checked" : "";
   const thresholdPct = (parseFloat(proximityThreshold) * 100).toFixed(1);
   const goldenIsOn   = onGolden === "true";
+  const fp = parseInt(fastPeriod) || 25;
+  const sp = parseInt(slowPeriod) || 60;
 
-  // Price context: if MA25 is known, show what the % means in absolute terms
+  // Price context: show what the proximity % means in absolute terms relative to fast MA
   const ma25Val = parseFloat(ma25);
   const priceContextHint = (ma25Val > 0)
-    ? `目前等於 MA25 ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(thresholdPct) / 100).toFixed(2)}`
+    ? `目前等於 MA${fp} ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(thresholdPct) / 100).toFixed(2)}`
     : "";
 
   openSheet(`
@@ -338,6 +344,23 @@ function openSettingsSheet(dataset, container) {
       <label>顯示名稱（選填）</label>
       <input id="settings-label-input" placeholder="${esc(symbol)}" value="${esc(label)}" maxlength="50" />
       <div class="text-sm text-muted" style="margin-top:4px">留空則顯示股票代碼</div>
+    </div>
+    <div class="field" style="margin-top:16px">
+      <label style="margin-bottom:8px;display:block">均線設定</label>
+      <div style="display:flex;gap:12px;align-items:flex-end">
+        <div style="flex:1">
+          <label class="text-sm" style="display:block;margin-bottom:4px">快線 MA</label>
+          <input type="number" id="settings-fast-period" min="2" max="200" value="${fp}"
+            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text)" />
+        </div>
+        <div style="flex:1">
+          <label class="text-sm" style="display:block;margin-bottom:4px">慢線 MA</label>
+          <input type="number" id="settings-slow-period" min="3" max="200" value="${sp}"
+            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text)" />
+        </div>
+      </div>
+      <div id="settings-ma-error" class="text-sm" style="color:var(--red);margin-top:4px;display:none">慢線 MA 必須大於快線 MA</div>
+      <div class="text-sm text-muted" style="margin-top:4px">預設 MA25/MA60（2560戰法），可自訂任意均線組合</div>
     </div>
     <div class="field" style="margin-top:16px">
       <label style="margin-bottom:8px;display:block">通知設定</label>
@@ -356,7 +379,7 @@ function openSettingsSheet(dataset, container) {
     </div>
     <div class="divider"></div>
     <div id="settings-proximity-section" style="opacity:${goldenIsOn ? 1 : 0.4};transition:opacity .2s">
-      <label style="margin-bottom:8px;display:block">接近 MA25 警示門檻
+      <label style="margin-bottom:8px;display:block">接近快線警示門檻
         <span class="text-sm text-muted">（黃金交叉通知啟用時有效）</span>
       </label>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -365,19 +388,19 @@ function openSettingsSheet(dataset, container) {
       </div>
       <input type="range" id="settings-threshold" min="0.1" max="5" step="0.1" value="${thresholdPct}"
         style="width:100%" ${goldenIsOn ? "" : "disabled"} />
-      <div class="text-sm text-muted" style="margin-top:4px">價格距 MA25 在此範圍內時觸發（預設 1.5%）</div>
+      <div class="text-sm text-muted" style="margin-top:4px">價格距快線在此範圍內時觸發（預設 1.5%）</div>
     </div>
     <button class="btn primary full" id="settings-save" style="margin-top:16px">儲存</button>
   `);
 
   document.getElementById("settings-threshold").addEventListener("input", (e) => {
     const pct = parseFloat(e.target.value).toFixed(1);
+    const curFp = parseInt(document.getElementById("settings-fast-period").value) || fp;
     document.getElementById("settings-threshold-display").textContent = pct + "%";
     if (priceContextHint && ma25Val > 0) {
-      // Update price context hint live as slider moves
       const section = document.getElementById("settings-proximity-section");
       const hint = section?.querySelector(".text-sm.text-muted");
-      if (hint) hint.textContent = `目前等於 MA25 ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(pct) / 100).toFixed(2)}`;
+      if (hint) hint.textContent = `目前等於 MA${curFp} ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(pct) / 100).toFixed(2)}`;
     }
   });
 
@@ -390,11 +413,20 @@ function openSettingsSheet(dataset, container) {
   });
 
   document.getElementById("settings-save").addEventListener("click", async () => {
-    const newLabel = document.getElementById("settings-label-input").value.trim();
-    const newGolden = document.getElementById("settings-golden").checked;
-    const newDeath = document.getElementById("settings-death").checked;
-    const newActive = document.getElementById("settings-active").checked;
-    const newThreshold = parseFloat(document.getElementById("settings-threshold").value) / 100;
+    const newLabel      = document.getElementById("settings-label-input").value.trim();
+    const newGolden     = document.getElementById("settings-golden").checked;
+    const newDeath      = document.getElementById("settings-death").checked;
+    const newActive     = document.getElementById("settings-active").checked;
+    const newThreshold  = parseFloat(document.getElementById("settings-threshold").value) / 100;
+    const newFastPeriod = parseInt(document.getElementById("settings-fast-period").value, 10);
+    const newSlowPeriod = parseInt(document.getElementById("settings-slow-period").value, 10);
+    const errEl = document.getElementById("settings-ma-error");
+
+    if (newFastPeriod >= newSlowPeriod) {
+      errEl.style.display = "block";
+      return;
+    }
+    errEl.style.display = "none";
 
     const btn = document.getElementById("settings-save");
     btn.disabled = true;
@@ -408,6 +440,8 @@ function openSettingsSheet(dataset, container) {
           on_death:            newDeath,
           active:              newActive,
           proximity_threshold: newThreshold,
+          fast_period:         newFastPeriod,
+          slow_period:         newSlowPeriod,
         }),
       ]);
       closeSheet();

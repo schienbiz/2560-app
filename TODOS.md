@@ -148,6 +148,73 @@ all counts will be 1 and hidden — the feature is invisible. Don't ship until t
 
 ---
 
+## SignalHistory column rename (fast_ma / slow_ma)
+
+**What:** Rename `SignalHistory.ma25` and `ma60` columns to `fast_ma` and `slow_ma`.
+
+**Why:** After the Configurable MA Pairs feature, these columns store the fast and slow MA values
+for whatever periods the user configured. A user with MA5/MA20 has their MA5 value stored in
+the `ma25` column — misleading for any future developer or query reading signal history.
+
+**Pros:** Semantically correct column names. Future signal history UI can read `fast_ma`/`slow_ma`
+and correctly label them without knowing the original period.
+**Cons:** Requires a Prisma migration (rename columns) + update cron/scan.ts writes. Breaking
+if any analytics query reads `ma25`/`ma60` directly. Low risk today since no history UI exists.
+
+**Context:** Accepted as safe deferral in /plan-eng-review 2026-05-13 (D2). The table is
+write-only — no display or analytics reads back these values. Fix at the point when a signal
+history display or analytics query is first built. Don't do it earlier (unnecessary migration).
+
+**Depends on:** Signal history UI feature being planned.
+
+---
+
+## cache.ts bar-depth check understates minimum for large slow_period
+
+**What:** Revise `getCachedOHLCV`'s minimum bar count check from `Math.min(days, 60)` to
+`Math.ceil(days * 0.65)` or a similar trading-day-aware formula.
+
+**Why:** With `days=320` (slow_period=200), the current check only requires ≥60 rows in the
+DB for a cache hit. A cold cache with 70 rows returns a false hit: the caller gets 70 bars,
+MA200 computes nulls. Currently safe because `cron/scan.ts`'s bar guard (slow_period + 5
+check) catches this and emits `insufficient_data`. If the bar guard is ever weakened or
+removed, this becomes a silent wrong-MA bug.
+
+**Pros:** Removes the latent dependency on the bar guard. Cache correctly invalidates when
+bar depth is insufficient for the requested period.
+**Cons:** More DB misses on first runs, triggering more Yahoo/Kraken fetches.
+
+**Context:** Found during /plan-eng-review 2026-05-13. Currently defended by the bar guard.
+Fix during any future cache refactor. Do not fix in isolation — it changes cache behavior.
+
+**Depends on:** Any future cache layer refactor. Independent otherwise.
+
+---
+
+## PTT demand validation experiment
+
+**What:** Post on PTT Stock board: "請問有人用不同的均線組合（不是固定25/60）作為買賣依據嗎？"
+Count engaged replies within 48h.
+
+**Why:** Approach A (Configurable MA Pairs) was built on the assumption that traders use
+non-25/60 MA pairs. The PTT experiment validates whether there is actually demand from
+Taiwan retail traders beyond the beachhead user (one friend/family member).
+
+**Signal reading:**
+- ≥5 engaged replies → demand validated → Approach B (multi-strategy alert platform) moves to roadmap
+- < 5 replies → distribution is the bottleneck, not strategy flexibility → focus on getting more users
+
+**Pros:** Low cost (15 minutes to write the post). Real demand signal from the actual audience.
+**Cons:** PTT requires a registered account. Results depend on post timing (market hours vs. weekend).
+
+**Context:** The design doc (Premise 3) explicitly flagged this as unrun. The assignment from
+the 2026-05-13 office hours session: post BEFORE writing more code. The configurable MA Pairs
+feature should be shipped first so there's something to link to.
+
+**Depends on:** Configurable MA Pairs feature shipped.
+
+---
+
 ## Completed
 
 ### Configurable proximity threshold per-symbol
