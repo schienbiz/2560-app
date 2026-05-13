@@ -20,7 +20,7 @@ export const aiRouter = new Hono()
 aiRouter.use("*", authMiddleware)
 
 aiRouter.post("/analyze/:symbol", async c => {
-  if (!process.env.GROQ_API_KEY) {
+  if (!process.env.NVIDIA_API_KEY && !process.env.GROQ_API_KEY) {
     return c.json({ error: "AI 功能尚未啟用" }, 503)
   }
 

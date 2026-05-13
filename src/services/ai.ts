@@ -1,9 +1,12 @@
 /**
- * Shared AI service — Groq free tier (Llama 3.1 8B).
+ * Shared AI service — NVIDIA NIM primary, Groq fallback.
  *
- * Free tier: 30 RPM, 14,400 req/day — plenty for a small trading app.
- * Get API key: console.groq.com → API Keys → Create
- * No credit card required.
+ * Primary:  NVIDIA NIM  (meta/llama-3.1-70b-instruct) — better quality
+ * Fallback: Groq        (llama-3.1-8b-instant)         — kicks in if NVIDIA fails/times out
+ *
+ * Set NVIDIA_API_KEY in .env to enable the primary.
+ * Set GROQ_API_KEY   in .env to enable the fallback.
+ * At least one must be present; having both gives full redundancy.
  *
  * Two entry points:
  *   analyzeChart(data, question?) → structured 5-point price action analysis
@@ -13,8 +16,11 @@
 import type { ChartData } from "../engine/types.js"
 import { computeStructure } from "../engine/structure.js"
 
+const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+const NVIDIA_MODEL = "meta/llama-3.1-70b-instruct"
+
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-const MODEL    = "llama-3.1-8b-instant"
+const GROQ_MODEL = "llama-3.1-8b-instant"
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
@@ -24,16 +30,13 @@ const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25�
 
 回覆使用繁體中文，語氣直接、具體。`
 
-// ─── Groq call ────────────────────────────────────────────────────────────────
+// ─── Single provider call (OpenAI-compatible) ─────────────────────────────────
 
-async function chat(userMsg: string): Promise<string> {
-  const key = process.env.GROQ_API_KEY
-  if (!key) throw new Error("GROQ_API_KEY not set")
-
+async function callProvider(url: string, key: string, model: string, userMsg: string): Promise<string> {
   const controller = new AbortController()
   const timeout    = setTimeout(() => controller.abort(), 30_000)
 
-  const res = await fetch(GROQ_URL, {
+  const res = await fetch(url, {
     method:  "POST",
     signal:  controller.signal,
     headers: {
@@ -41,7 +44,7 @@ async function chat(userMsg: string): Promise<string> {
       "Authorization": `Bearer ${key}`,
     },
     body: JSON.stringify({
-      model:      MODEL,
+      model,
       max_tokens: 500,
       messages: [
         { role: "system", content: SYSTEM },
@@ -53,11 +56,31 @@ async function chat(userMsg: string): Promise<string> {
 
   if (!res.ok) {
     const err = await res.text()
-    throw new Error(`Groq error ${res.status}: ${err}`)
+    throw new Error(`${url.includes("nvidia") ? "NVIDIA" : "Groq"} error ${res.status}: ${err}`)
   }
 
   const data = await res.json() as { choices: { message: { content: string } }[] }
   return data.choices[0]?.message?.content ?? "無法生成回覆。"
+}
+
+// ─── Chat: NVIDIA primary → Groq fallback ────────────────────────────────────
+
+async function chat(userMsg: string): Promise<string> {
+  const nvidiaKey = process.env.NVIDIA_API_KEY
+  const groqKey   = process.env.GROQ_API_KEY
+
+  if (!nvidiaKey && !groqKey) throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY 或 GROQ_API_KEY）")
+
+  if (nvidiaKey) {
+    try {
+      return await callProvider(NVIDIA_URL, nvidiaKey, NVIDIA_MODEL, userMsg)
+    } catch (err) {
+      console.warn("[ai] NVIDIA failed, falling back to Groq:", (err as Error).message)
+      if (!groqKey) throw err
+    }
+  }
+
+  return callProvider(GROQ_URL, groqKey!, GROQ_MODEL, userMsg)
 }
 
 // ─── Format helpers ───────────────────────────────────────────────────────────
