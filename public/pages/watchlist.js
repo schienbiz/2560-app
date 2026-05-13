@@ -172,19 +172,6 @@ async function loadList(container) {
       });
     });
 
-    listEl.querySelectorAll(".wl-delete").forEach((btn) => {
-      btn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        try {
-          await api.delete(`/api/watchlist/${id}`);
-          showToast("已移除");
-          await loadList(container);
-        } catch {
-          showToast("移除失敗");
-        }
-      });
-    });
   } catch {
     listEl.innerHTML = `<div class="empty">載入失敗，請稍後再試</div>`;
   }
@@ -222,7 +209,6 @@ function renderRow(item) {
           <span id="wl-signal-${sid}">${badge}</span>
           <div style="display:flex;gap:6px">
             <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-fast-period="${item.alert?.fast_period ?? 25}" data-slow-period="${item.alert?.slow_period ?? 60}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
-            <button class="btn danger wl-delete" data-id="${item.id}" style="padding:5px 9px;font-size:12px;min-height:34px">移除</button>
           </div>
         </div>
       </div>
@@ -338,73 +324,119 @@ function openSettingsSheet(dataset, container) {
     ? `目前等於 MA${fp} ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(thresholdPct) / 100).toFixed(2)}`
     : "";
 
+  const presets = [
+    { label: "5/20", fast: 5, slow: 20 },
+    { label: "25/60", fast: 25, slow: 60 },
+    { label: "50/200", fast: 50, slow: 200 },
+  ];
+  const presetBtns = presets.map(p => {
+    const active = p.fast === fp && p.slow === sp;
+    return `<button type="button" class="ma-preset btn secondary" data-fast="${p.fast}" data-slow="${p.slow}"
+      style="flex:1;padding:7px 0;font-size:13px;font-weight:600;${active ? "border-color:var(--blue);color:var(--blue)" : ""}">${p.label}</button>`;
+  }).join("");
+
   openSheet(`
     <h3>⚙ ${esc(symbol)} 設定</h3>
+
     <div class="field">
-      <label>顯示名稱（選填）</label>
-      <input id="settings-label-input" placeholder="${esc(symbol)}" value="${esc(label)}" maxlength="50" />
-      <div class="text-sm text-muted" style="margin-top:4px">留空則顯示股票代碼</div>
-    </div>
-    <div class="field" style="margin-top:16px">
-      <label style="margin-bottom:8px;display:block">均線設定</label>
+      <label style="margin-bottom:8px;display:block">均線組合</label>
+      <div style="display:flex;gap:8px;margin-bottom:10px">${presetBtns}</div>
       <div style="display:flex;gap:12px;align-items:flex-end">
         <div style="flex:1">
-          <label class="text-sm" style="display:block;margin-bottom:4px">快線 MA</label>
+          <label class="text-sm" style="display:block;margin-bottom:4px;color:var(--muted)">快線</label>
           <input type="number" id="settings-fast-period" min="2" max="200" value="${fp}"
-            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text)" />
+            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text);text-align:center" />
         </div>
+        <div style="padding-bottom:10px;color:var(--muted);font-size:18px">/</div>
         <div style="flex:1">
-          <label class="text-sm" style="display:block;margin-bottom:4px">慢線 MA</label>
+          <label class="text-sm" style="display:block;margin-bottom:4px;color:var(--muted)">慢線</label>
           <input type="number" id="settings-slow-period" min="3" max="200" value="${sp}"
-            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text)" />
+            style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:15px;background:var(--surface);color:var(--text);text-align:center" />
         </div>
       </div>
-      <div id="settings-ma-error" class="text-sm" style="color:var(--red);margin-top:4px;display:none">慢線 MA 必須大於快線 MA</div>
-      <div class="text-sm text-muted" style="margin-top:4px">預設 MA25/MA60（2560戰法），可自訂任意均線組合</div>
+      <div id="settings-ma-error" class="text-sm" style="color:var(--red);margin-top:4px;display:none">慢線必須大於快線</div>
     </div>
-    <div class="field" style="margin-top:16px">
-      <label style="margin-bottom:8px;display:block">通知設定</label>
-      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
-        <span>▲ 黃金交叉通知</span>
+
+    <div class="field" style="margin-top:14px">
+      <label style="margin-bottom:8px;display:block">通知</label>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border)">
+        <span>▲ 黃金交叉</span>
         <input type="checkbox" id="settings-golden" ${checked(onGolden)} />
       </label>
-      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)">
-        <span>▼ 死亡交叉通知</span>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border)">
+        <span>▼ 死亡交叉</span>
         <input type="checkbox" id="settings-death" ${checked(onDeath)} />
       </label>
-      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:10px 0">
-        <span>啟用此標的通知</span>
+      <label class="toggle-row" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0">
+        <span>啟用通知</span>
         <input type="checkbox" id="settings-active" ${checked(active)} />
       </label>
     </div>
-    <div class="divider"></div>
-    <div id="settings-proximity-section" style="opacity:${goldenIsOn ? 1 : 0.4};transition:opacity .2s">
-      <label style="margin-bottom:8px;display:block">接近快線警示門檻
-        <span class="text-sm text-muted">（黃金交叉通知啟用時有效）</span>
-      </label>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <span class="text-sm text-muted">${priceContextHint}</span>
-        <span id="settings-threshold-display" style="font-weight:600;color:var(--blue)">${thresholdPct}%</span>
+
+    <div style="margin-top:8px">
+      <button type="button" id="settings-adv-toggle" class="text-sm" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 0;display:flex;align-items:center;gap:4px">
+        <span id="settings-adv-arrow" style="display:inline-block;transition:transform .2s">▶</span> 進階設定
+      </button>
+      <div id="settings-adv-section" style="display:none;margin-top:8px">
+        <div class="field">
+          <label>顯示名稱（選填）</label>
+          <input id="settings-label-input" placeholder="${esc(symbol)}" value="${esc(label)}" maxlength="50" />
+          <div class="text-sm text-muted" style="margin-top:4px">留空則顯示股票代碼</div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <div id="settings-proximity-section" style="opacity:${goldenIsOn ? 1 : 0.4};transition:opacity .2s">
+            <label style="margin-bottom:8px;display:block">接近快線警示門檻</label>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <span class="text-sm text-muted">${priceContextHint}</span>
+              <span id="settings-threshold-display" style="font-weight:600;color:var(--blue)">${thresholdPct}%</span>
+            </div>
+            <input type="range" id="settings-threshold" min="0.1" max="5" step="0.1" value="${thresholdPct}"
+              style="width:100%" ${goldenIsOn ? "" : "disabled"} />
+            <div class="text-sm text-muted" style="margin-top:4px">價格距快線在此範圍內時觸發（預設 1.5%）</div>
+          </div>
+        </div>
       </div>
-      <input type="range" id="settings-threshold" min="0.1" max="5" step="0.1" value="${thresholdPct}"
-        style="width:100%" ${goldenIsOn ? "" : "disabled"} />
-      <div class="text-sm text-muted" style="margin-top:4px">價格距快線在此範圍內時觸發（預設 1.5%）</div>
     </div>
+
     <button class="btn primary full" id="settings-save" style="margin-top:16px">儲存</button>
+    <button type="button" class="btn secondary full" id="settings-delete" style="margin-top:8px;color:var(--red);border-color:var(--red)">移除此標的</button>
   `);
+
+  // MA preset buttons
+  document.querySelectorAll(".ma-preset").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.getElementById("settings-fast-period").value = btn.dataset.fast;
+      document.getElementById("settings-slow-period").value = btn.dataset.slow;
+      document.querySelectorAll(".ma-preset").forEach(b => {
+        b.style.borderColor = "";
+        b.style.color = "";
+      });
+      btn.style.borderColor = "var(--blue)";
+      btn.style.color = "var(--blue)";
+      document.getElementById("settings-ma-error").style.display = "none";
+    });
+  });
+
+  // Advanced toggle
+  document.getElementById("settings-adv-toggle").addEventListener("click", () => {
+    const section = document.getElementById("settings-adv-section");
+    const arrow   = document.getElementById("settings-adv-arrow");
+    const open    = section.style.display === "none";
+    section.style.display = open ? "block" : "none";
+    arrow.style.transform = open ? "rotate(90deg)" : "";
+  });
 
   document.getElementById("settings-threshold").addEventListener("input", (e) => {
     const pct = parseFloat(e.target.value).toFixed(1);
     const curFp = parseInt(document.getElementById("settings-fast-period").value) || fp;
     document.getElementById("settings-threshold-display").textContent = pct + "%";
-    if (priceContextHint && ma25Val > 0) {
+    if (ma25Val > 0) {
       const section = document.getElementById("settings-proximity-section");
       const hint = section?.querySelector(".text-sm.text-muted");
       if (hint) hint.textContent = `目前等於 MA${curFp} ${ma25Val.toFixed(2)} ± ${(ma25Val * parseFloat(pct) / 100).toFixed(2)}`;
     }
   });
 
-  // Golden toggle gates the proximity slider
   document.getElementById("settings-golden").addEventListener("change", (e) => {
     const section = document.getElementById("settings-proximity-section");
     const slider  = document.getElementById("settings-threshold");
@@ -413,7 +445,7 @@ function openSettingsSheet(dataset, container) {
   });
 
   document.getElementById("settings-save").addEventListener("click", async () => {
-    const newLabel      = document.getElementById("settings-label-input").value.trim();
+    const newLabel      = (document.getElementById("settings-label-input")?.value ?? "").trim();
     const newGolden     = document.getElementById("settings-golden").checked;
     const newDeath      = document.getElementById("settings-death").checked;
     const newActive     = document.getElementById("settings-active").checked;
@@ -451,6 +483,31 @@ function openSettingsSheet(dataset, container) {
       showToast("儲存失敗");
       btn.disabled = false;
       btn.textContent = "儲存";
+    }
+  });
+
+  document.getElementById("settings-delete").addEventListener("click", async () => {
+    const btn = document.getElementById("settings-delete");
+    if (btn.dataset.confirm !== "1") {
+      btn.textContent = "確認移除？";
+      btn.dataset.confirm = "1";
+      setTimeout(() => {
+        if (btn.dataset.confirm === "1") {
+          btn.textContent = "移除此標的";
+          btn.dataset.confirm = "";
+        }
+      }, 3000);
+      return;
+    }
+    btn.disabled = true;
+    try {
+      await api.delete(`/api/watchlist/${id}`);
+      closeSheet();
+      showToast("已移除");
+      await loadList(container);
+    } catch {
+      showToast("移除失敗");
+      btn.disabled = false;
     }
   });
 }
