@@ -107,12 +107,34 @@ const alertSchema = z.object({
   on_death:            z.boolean().optional(),
   active:              z.boolean().optional(),
   proximity_threshold: z.number().min(0.001).max(0.1).optional(),
+  fast_period:         z.number().int().min(2).max(200).optional(),
+  slow_period:         z.number().int().min(3).max(200).optional(),
 })
 
 watchlistRouter.put("/:id/alert", zValidator("json", alertSchema), async c => {
   const { userId, platform } = c.get("user")
   const id = c.req.param("id")
   const body = c.req.valid("json")
+
+  const { fast_period, slow_period } = body
+  if (fast_period !== undefined && slow_period !== undefined && fast_period >= slow_period) {
+    return c.json({ error: "慢線 MA 必須大於快線 MA" }, 400)
+  }
+  if (fast_period !== undefined && slow_period === undefined) {
+    // Validate against existing slow_period if only fast_period is being updated
+    const existing = await db.watchlistAlert.findUnique({ where: { watchlist_id: id } })
+    const effectiveSlow = existing?.slow_period ?? 60
+    if (fast_period >= effectiveSlow) {
+      return c.json({ error: "慢線 MA 必須大於快線 MA" }, 400)
+    }
+  }
+  if (slow_period !== undefined && fast_period === undefined) {
+    const existing = await db.watchlistAlert.findUnique({ where: { watchlist_id: id } })
+    const effectiveFast = existing?.fast_period ?? 25
+    if (effectiveFast >= slow_period) {
+      return c.json({ error: "慢線 MA 必須大於快線 MA" }, 400)
+    }
+  }
 
   const item = await db.watchlist.findFirst({ where: { id, user_id: userId, platform } })
   if (!item) return c.json({ error: "Not found" }, 404)

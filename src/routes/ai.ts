@@ -10,9 +10,10 @@ import { Hono } from "hono"
 import { authMiddleware } from "../auth.js"
 import { analyzeChart } from "../services/ai.js"
 import { getAdapter } from "../adapters/index.js"
-import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { computeMA, analyzeSymbol } from "../engine/index.js"
 import { computeSR } from "../engine/sr.js"
+import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
+import { db } from "../db.js"
 import type { ChartData } from "../engine/types.js"
 
 export const aiRouter = new Hono()
@@ -27,19 +28,25 @@ aiRouter.post("/analyze/:symbol", async c => {
   const body   = await c.req.json<{ question?: string }>().catch(() => ({ question: undefined }))
 
   try {
+    const { userId, platform } = c.get("user")
     const { adapter, normalizedSymbol } = getAdapter(symbol)
     const assetType = adapter.getAssetType()
 
-    let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 120)
-    if (!ohlcv) {
-      ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 120)
-      if (ohlcv.length === 0) return c.json({ error: `找不到標的：${normalizedSymbol}` }, 404)
-      await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
-    }
+    // Use the user's configured MA periods for this symbol (if any)
+    const watchlistItem = await db.watchlist.findFirst({
+      where: { user_id: userId, platform, symbol: normalizedSymbol },
+      include: { alert: true },
+    })
+    const fastPeriod = watchlistItem?.alert?.fast_period ?? 25
+    const slowPeriod = watchlistItem?.alert?.slow_period ?? 60
+    const days = Math.max(120, fetchDaysFor(slowPeriod, assetType))
+
+    const ohlcv = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
+    if (ohlcv.length === 0) return c.json({ error: `找不到標的：${normalizedSymbol}` }, 404)
 
     const closes = ohlcv.map(b => b.close)
-    const ma25   = computeMA(closes, 25)
-    const ma60   = computeMA(closes, 60)
+    const ma25   = computeMA(closes, fastPeriod)
+    const ma60   = computeMA(closes, slowPeriod)
     const result = analyzeSymbol(ohlcv)
     const sr     = computeSR(ohlcv)
 

@@ -57,6 +57,8 @@ model WatchlistAlert {
   on_death            Boolean   @default(true)
   active              Boolean   @default(true)
   proximity_threshold Float     @default(0.015)
+  fast_period         Int       @default(25)
+  slow_period         Int       @default(60)
 }
 
 // ─── Manual "remind me to check this symbol on date X" ───────────────────────
