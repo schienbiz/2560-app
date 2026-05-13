@@ -183,6 +183,43 @@ ${task}
   return chat(prompt)
 }
 
+// ─── Notification insight (1 sentence, optimised for LINE/Telegram push) ─────
+//
+// Returns a single punchy sentence of context for a cross or proximity alert.
+// The caller constructs the structured header/data lines; this adds the "why
+// this matters right now" layer that only AI can provide.
+
+export async function notifyInsight(data: ChartData, signal: string, fastPeriod: number, slowPeriod: number): Promise<string> {
+  const lastBar = data.ohlcv.at(-1)
+  if (!lastBar) return ""
+
+  const close = lastBar.close
+  const ma25  = [...data.ma25].reverse().find(v => v != null) ?? null
+  const ma60  = [...data.ma60].reverse().find(v => v != null) ?? null
+  const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
+
+  const signalCtx = signal === "golden_cross"
+    ? `MA${fastPeriod} 剛由下往上穿越 MA${slowPeriod}（黃金交叉），信心度：${data.confidence === "high" ? "高（成交量放大）" : "普通"}`
+    : signal === "death_cross"
+    ? `MA${fastPeriod} 剛由上往下穿越 MA${slowPeriod}（死亡交叉），信心度：${data.confidence === "high" ? "高（成交量放大）" : "普通"}`
+    : `價格接近 MA${fastPeriod}（${data.confidence === "high" ? "高信心度" : "普通"}）`
+
+  const prompt = `標的：${data.symbol}
+收盤：${close}，MA${fastPeriod}：${ma25?.toFixed(2) ?? "N/A"}，MA${slowPeriod}：${ma60?.toFixed(2) ?? "N/A"}
+訊號：${signalCtx}
+趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}
+
+用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過30字）。`
+
+  try {
+    const raw = await chat(prompt)
+    // Strip leading numbering or common filler prefixes the model occasionally adds
+    return raw.replace(/^[\d\.\s]+/, "").replace(/^(建議|根據|由於|因此|總結)[，：:、]?/, "").trim()
+  } catch {
+    return ""
+  }
+}
+
 // ─── General bot chat ─────────────────────────────────────────────────────────
 
 export interface BotContext {

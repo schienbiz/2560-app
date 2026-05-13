@@ -12,7 +12,7 @@ import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
-import { analyzeChart } from "../src/services/ai.js"
+import { notifyInsight } from "../src/services/ai.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 
@@ -88,15 +88,21 @@ export async function runScan() {
 
           if (!alreadySent) {
             const crossLabel = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
-            let msg: string
-            try {
-              msg = await analyzeChart(chartData) + deepLink(normalizedSymbol)
-            } catch (err) {
-              console.error(`  AI failed for ${normalizedSymbol} cross:`, err)
-              const emoji     = signal === "golden_cross" ? "🟢" : "🔴"
-              const confLabel = confidence === "high" ? " 高信心度" : ""
-              msg = `${emoji} ${watchlist.label ?? watchlist.symbol} ${maLabel} ${crossLabel}${confLabel}\n收盤 ${latest.close}  日期 ${latest.date}` + deepLink(normalizedSymbol)
-            }
+            const emoji      = signal === "golden_cross" ? "🟢" : "🔴"
+            const confLabel  = confidence === "high" ? " 高信心度" : ""
+            const arrow      = signal === "golden_cross" ? "↑" : "↓"
+            const entryLow   = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
+            const entryHigh  = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
+            const stopLine   = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
+
+            const insight = await notifyInsight(chartData, signal, fastPeriod, slowPeriod)
+
+            const msg = [
+              `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
+              `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${latest.close}`,
+              `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
+              insight,
+            ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
             await push(watchlist.platform, watchlist.user_id, msg)
 
@@ -140,16 +146,17 @@ export async function runScan() {
             })
 
             if (!alreadyAlerted) {
-              let proximityMsg: string
-              try {
-                proximityMsg = await analyzeChart(
-                  chartData,
-                  `價格目前距離 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}%，接近 ${maLabel} 策略理想進場區。請分析此時進場的風險報酬，以及 MA${fastPeriod} 支撐強度。`,
-                ) + deepLink(normalizedSymbol)
-              } catch (err) {
-                console.error(`  AI failed for ${normalizedSymbol} proximity:`, err)
-                proximityMsg = `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區\n距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}%，趨勢向上，留意進場時機。收盤 ${latest.close}` + deepLink(normalizedSymbol)
-              }
+              const entryLow  = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
+              const entryHigh = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
+              const stopLine  = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
+              const insight   = await notifyInsight(chartData, "proximity_golden", fastPeriod, slowPeriod)
+
+              const proximityMsg = [
+                `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區`,
+                `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${latest.close}`,
+                `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
+                insight,
+              ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
               await push(watchlist.platform, watchlist.user_id, proximityMsg)
 
