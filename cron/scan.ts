@@ -21,6 +21,13 @@ import type { ChartData } from "../src/engine/types.js"
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
 const APP_URL        = "https://two560-app.onrender.com"
 
+// Smart MACD formatter: large values (BTC) get 0-2 decimals, small (alt) get 4-6
+function fmtMacd(v: number): string {
+  const abs = Math.abs(v)
+  const dec = abs >= 100 ? 0 : abs >= 1 ? 2 : abs >= 0.01 ? 4 : 6
+  return (v >= 0 ? "+" : "") + v.toFixed(dec)
+}
+
 function deepLink(symbol: string): string {
   return `\n${APP_URL}/?symbol=${encodeURIComponent(symbol)}`
 }
@@ -114,7 +121,7 @@ export async function runScan() {
 
             // RSI + MACD summary line
             const rsiStr  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
-            const macdStr = macdHist != null ? `MACD柱 ${macdHist >= 0 ? "+" : ""}${macdHist.toFixed(4)}` : null
+            const macdStr = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
             const indLine = [rsiStr, macdStr].filter(Boolean).join(" · ")
 
             // Sentiment line (crypto only)
@@ -178,9 +185,14 @@ export async function runScan() {
               const stopLine  = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
               const insight   = await notifyInsight(chartData, "proximity_golden", fastPeriod, slowPeriod)
 
+              const proxRsi  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
+              const proxMacd = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
+              const proxInd  = [proxRsi, proxMacd].filter(Boolean).join(" · ")
+
               const proximityMsg = [
                 `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區`,
                 `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${latest.close}`,
+                proxInd,
                 `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
                 insight,
               ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)

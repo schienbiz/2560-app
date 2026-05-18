@@ -74,41 +74,109 @@ async function callProvider(
   return data.choices[0]?.message?.content ?? "無法生成回覆。"
 }
 
-// ─── Chat: NVIDIA → Groq → OpenRouter fallback chain ─────────────────────────
+// ─── Provider registry ────────────────────────────────────────────────────────
+
+interface Provider {
+  label:        string
+  url:          string
+  model:        string
+  key:          () => string | undefined
+  extraHeaders?: Record<string, string>
+}
+
+function getProviders(): Provider[] {
+  return [
+    {
+      label: "NVIDIA", url: NVIDIA_URL, model: NVIDIA_MODEL,
+      key: () => process.env.NVIDIA_API_KEY,
+    },
+    {
+      label: "Groq", url: GROQ_URL, model: GROQ_MODEL,
+      key: () => process.env.GROQ_API_KEY,
+    },
+    {
+      label: "OpenRouter", url: OPENROUTER_URL, model: OPENROUTER_MODEL,
+      key: () => process.env.OPENROUTER_API_KEY,
+      extraHeaders: {
+        "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
+        "X-Title":      "2560戰法",
+      },
+    },
+  ].filter(p => !!p.key())
+}
+
+// ─── Chat: NVIDIA → Groq → OpenRouter sequential fallback ────────────────────
+// Used for latency-sensitive calls (push notifications, sentiment scoring).
 
 export async function chat(userMsg: string): Promise<string> {
-  const nvidiaKey      = process.env.NVIDIA_API_KEY
-  const groqKey        = process.env.GROQ_API_KEY
-  const openrouterKey  = process.env.OPENROUTER_API_KEY
+  const providers = getProviders()
+  if (providers.length === 0) throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY）")
 
-  if (!nvidiaKey && !groqKey && !openrouterKey) {
-    throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY）")
-  }
-
-  if (nvidiaKey) {
+  for (const p of providers) {
     try {
-      return await callProvider("NVIDIA", NVIDIA_URL, nvidiaKey, NVIDIA_MODEL, userMsg)
+      return await callProvider(p.label, p.url, p.key()!, p.model, userMsg, p.extraHeaders)
     } catch (err) {
-      console.warn("[ai] NVIDIA failed:", (err as Error).message)
+      console.warn(`[ai] ${p.label} failed:`, (err as Error).message)
     }
   }
-
-  if (groqKey) {
-    try {
-      return await callProvider("Groq", GROQ_URL, groqKey, GROQ_MODEL, userMsg)
-    } catch (err) {
-      console.warn("[ai] Groq failed:", (err as Error).message)
-    }
-  }
-
-  if (openrouterKey) {
-    return callProvider("OpenRouter", OPENROUTER_URL, openrouterKey, OPENROUTER_MODEL, userMsg, {
-      "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
-      "X-Title":      "2560戰法",
-    })
-  }
-
   throw new Error("[ai] 所有 AI 服務均失敗")
+}
+
+// ─── Multi-model synthesis: all providers in parallel → cross-validate ───────
+// Used for on-demand analysis (analyzeChart, chatWithContext).
+// Each available model answers independently; a synthesis pass reconciles
+// agreements and flags divergences to produce a more accurate final answer.
+// Gracefully degrades to single-model when only one key is configured.
+
+export async function multiChat(userMsg: string): Promise<string> {
+  const providers = getProviders()
+  if (providers.length === 0) throw new Error("未設定 AI API 金鑰")
+  if (providers.length === 1) {
+    return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, providers[0].extraHeaders)
+  }
+
+  // Call all providers in parallel (25s per-provider timeout)
+  const results = await Promise.allSettled(
+    providers.map(p => callProvider(p.label, p.url, p.key()!, p.model, userMsg, p.extraHeaders))
+  )
+
+  const ok = results
+    .map((r, i) => r.status === "fulfilled" ? { label: providers[i].label, text: r.value } : null)
+    .filter((r): r is { label: string; text: string } => r !== null)
+
+  console.log(`[ai] multi: ${ok.map(r => r.label).join("+")} responded`)
+
+  if (ok.length === 0) throw new Error("[ai] 所有 AI 服務均失敗")
+  if (ok.length === 1) return ok[0].text
+
+  // Synthesis prompt: find consensus, flag divergences, produce a better answer
+  const perspectives = ok.map(r => `【${r.label}】\n${r.text}`).join("\n\n---\n\n")
+
+  const synthPrompt = `以下是 ${ok.length} 個 AI 模型對同一交易問題的獨立分析：
+
+${perspectives}
+
+---
+
+任務：交叉比對以上分析，輸出一份更精準的最終版本。
+規則：
+1. 多數模型一致的判斷 → 直接採用為結論
+2. 有分歧的判斷 → 選擇有具體數據支撐的一方，並在該點加上「⚠ 分析有分歧：」說明
+3. 只輸出最終分析，不要重複列出各模型原文
+4. 保持繁體中文、直接具體的風格，格式與原問題要求一致`
+
+  try {
+    // Synthesize with the first successful provider
+    const synth = providers.find(p => ok.find(r => r.label === p.label))!
+    const final = await callProvider(
+      `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, synth.extraHeaders
+    )
+    console.log(`[ai] synthesis via ${synth.label}`)
+    return final
+  } catch (err) {
+    console.warn("[ai] synthesis failed, returning best single response:", (err as Error).message)
+    return ok[0].text
+  }
 }
 
 // ─── Format helpers ───────────────────────────────────────────────────────────
@@ -218,7 +286,7 @@ ${task}
 
 每點 1–2 句，嚴格依照五點編號，簡潔有力。`
 
-  return chat(prompt)
+  return multiChat(prompt)
 }
 
 // ─── Notification insight (1 sentence, optimised for LINE/Telegram push) ─────
@@ -296,5 +364,5 @@ export async function chatWithContext(question: string, ctx: BotContext): Promis
       }).join("\n")}`
     : "最近交易：（無）"
 
-  return chat(`${watchlistStr}\n${tradesStr}\n\n問題：${question}`)
+  return multiChat(`${watchlistStr}\n${tradesStr}\n\n問題：${question}`)
 }
