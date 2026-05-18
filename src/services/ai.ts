@@ -65,7 +65,7 @@ async function callProvider(url: string, key: string, model: string, userMsg: st
 
 // ─── Chat: NVIDIA primary → Groq fallback ────────────────────────────────────
 
-async function chat(userMsg: string): Promise<string> {
+export async function chat(userMsg: string): Promise<string> {
   const nvidiaKey = process.env.NVIDIA_API_KEY
   const groqKey   = process.env.GROQ_API_KEY
 
@@ -143,11 +143,20 @@ export async function analyzeChart(data: ChartData, question?: string): Promise<
       ? `死亡交叉（${data.signal_date ?? "近期"}，信心度：${data.confidence === "high" ? "高" : data.confidence === "medium" ? "中" : "低"}）`
     : "無明顯交叉訊號"
 
+  const rsiLabel  = data.rsi != null
+    ? `RSI(14)：${data.rsi.toFixed(1)}（${data.rsi >= 70 ? "超買" : data.rsi <= 30 ? "超賣" : data.rsi > 50 ? "偏多" : "偏空"}）`
+    : ""
+  const macdLabel = data.macdHist != null
+    ? `MACD柱狀(12/26/9)：${data.macdHist >= 0 ? "+" : ""}${data.macdHist.toFixed(4)}（${data.macdHist >= 0 ? "多頭動能" : "空頭動能"}）`
+    : ""
+
   const context = [
     `標的：${data.symbol}（${data.asset_type === "stock" ? "台股" : "加密貨幣"}）`,
     `最新收盤：${fmt(close)}`,
     `MA25：${ma25 != null ? fmt(ma25) : "N/A"}（收盤距 MA25：${ma25 != null ? pctDiff(close, ma25) : "N/A"}）`,
     `MA60：${ma60 != null ? fmt(ma60) : "N/A"}（MA25 距 MA60：${(ma25 != null && ma60 != null) ? pctDiff(ma25, ma60) : "N/A"}）`,
+    rsiLabel,
+    macdLabel,
     `2560訊號：${signalLabel}`,
     ``,
     `近15日K線（日期 H/L/C）：`,
@@ -174,9 +183,10 @@ ${task}
 
 1) 趨勢階段：impulse（推進）、correction（回調）還是 range（盤整）？說明 MA25/MA60 排列。
 2) 價格結構：從擺動點描述 HH/HL 或 LH/LL 結構，判斷多空誰在控盤。
-3) 進場區與操作：依 2560戰法，進場區（MA25 ±1%）、入場條件、多方/空方/觀望。
-4) 偏向與理由：看多/看空/觀望，一句話核心理由（訊號 + 結構 + MA排列）。
-5) 失效條件：具體說明哪個收盤價位會使此偏向失效。
+3) 動能確認：RSI 與 MACD 柱狀是否與訊號方向一致？說明超買/超賣風險。
+4) 進場區與操作：依 2560戰法，進場區（MA25 ±1%）、入場條件、多方/空方/觀望。
+5) 偏向與理由：看多/看空/觀望，一句話核心理由（訊號 + RSI/MACD + MA排列）。
+6) 失效條件：具體說明哪個收盤價位會使此偏向失效。
 
 每點 1–2 句，嚴格依照五點編號，簡潔有力。`
 
@@ -189,13 +199,24 @@ ${task}
 // The caller constructs the structured header/data lines; this adds the "why
 // this matters right now" layer that only AI can provide.
 
-export async function notifyInsight(data: ChartData, signal: string, fastPeriod: number, slowPeriod: number): Promise<string> {
+export interface SentimentCtx {
+  score:   -1 | 0 | 1
+  summary: string
+}
+
+export async function notifyInsight(
+  data:        ChartData,
+  signal:      string,
+  fastPeriod:  number,
+  slowPeriod:  number,
+  sentiment?:  SentimentCtx
+): Promise<string> {
   const lastBar = data.ohlcv.at(-1)
   if (!lastBar) return ""
 
-  const close = lastBar.close
-  const ma25  = [...data.ma25].reverse().find(v => v != null) ?? null
-  const ma60  = [...data.ma60].reverse().find(v => v != null) ?? null
+  const close  = lastBar.close
+  const ma25   = [...data.ma25].reverse().find(v => v != null) ?? null
+  const ma60   = [...data.ma60].reverse().find(v => v != null) ?? null
   const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
 
   const signalCtx = signal === "golden_cross"
@@ -204,16 +225,22 @@ export async function notifyInsight(data: ChartData, signal: string, fastPeriod:
     ? `MA${fastPeriod} 剛由上往下穿越 MA${slowPeriod}（死亡交叉），信心度：${data.confidence === "high" ? "高（成交量放大）" : "普通"}`
     : `價格接近 MA${fastPeriod}（${data.confidence === "high" ? "高信心度" : "普通"}）`
 
+  const rsiLine  = data.rsi != null      ? `RSI(14)：${data.rsi.toFixed(1)}`                                     : ""
+  const macdLine = data.macdHist != null ? `MACD柱：${data.macdHist >= 0 ? "+" : ""}${data.macdHist.toFixed(4)}` : ""
+  const sentLine = sentiment
+    ? `新聞情緒：${sentiment.score === 1 ? "正面" : sentiment.score === -1 ? "負面" : "中性"}（${sentiment.summary}）`
+    : ""
+  const indicators = [rsiLine, macdLine, sentLine].filter(Boolean).join("，")
+
   const prompt = `標的：${data.symbol}
 收盤：${close}，MA${fastPeriod}：${ma25?.toFixed(2) ?? "N/A"}，MA${slowPeriod}：${ma60?.toFixed(2) ?? "N/A"}
 訊號：${signalCtx}
-趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}
+趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}${indicators ? "\n" + indicators : ""}
 
 用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過30字）。`
 
   try {
     const raw = await chat(prompt)
-    // Strip leading numbering or common filler prefixes the model occasionally adds
     return raw.replace(/^[\d\.\s]+/, "").replace(/^(建議|根據|由於|因此|總結)[，：:、]?/, "").trim()
   } catch {
     return ""

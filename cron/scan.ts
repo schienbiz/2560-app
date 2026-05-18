@@ -13,6 +13,8 @@ import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
 import { notifyInsight } from "../src/services/ai.js"
+import { fetchCryptoNews, scoreNewsSentiment } from "../src/services/news.js"
+import type { SentimentResult } from "../src/services/news.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 
@@ -63,7 +65,7 @@ export async function runScan() {
       const maSlowLast = maSlow[maSlow.length - 1] as number
 
       // scoreSignal with lookback=1: only fire if cross happened at the last bar
-      const { signal, confidence } = scoreSignal(ohlcv, maFast, maSlow, 1)
+      const { signal, confidence, rsi, macdHist } = scoreSignal(ohlcv, maFast, maSlow, 1)
       const latest = ohlcv[ohlcv.length - 1]
 
       const chartData: ChartData = {
@@ -77,6 +79,8 @@ export async function runScan() {
         signal_date: latest.date,
         support:     [],
         resistance:  [],
+        rsi,
+        macdHist,
       }
 
       // ── 1. Cross event ────────────────────────────────────────────────────────
@@ -95,11 +99,36 @@ export async function runScan() {
             const entryHigh  = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
             const stopLine   = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
-            const insight = await notifyInsight(chartData, signal, fastPeriod, slowPeriod)
+            // Fetch news sentiment for crypto assets (non-blocking; best effort)
+            let sentiment: SentimentResult | undefined
+            if (assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
+              try {
+                const headlines = await fetchCryptoNews(normalizedSymbol)
+                if (headlines.length) {
+                  sentiment = await scoreNewsSentiment(headlines, signal)
+                }
+              } catch {
+                // sentiment is optional — proceed without it
+              }
+            }
+
+            const insight = await notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment)
+
+            // RSI + MACD summary line
+            const rsiStr  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
+            const macdStr = macdHist != null ? `MACD柱 ${macdHist >= 0 ? "+" : ""}${macdHist.toFixed(4)}` : null
+            const indLine = [rsiStr, macdStr].filter(Boolean).join(" · ")
+
+            // Sentiment line (crypto only)
+            const sentLine = sentiment
+              ? `情緒 ${sentiment.score === 1 ? "📈 正面" : sentiment.score === -1 ? "📉 負面" : "➖ 中性"} · ${sentiment.summary}`
+              : null
 
             const msg = [
               `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
               `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${latest.close}`,
+              indLine,
+              sentLine,
               `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
               insight,
             ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)

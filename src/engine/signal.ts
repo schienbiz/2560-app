@@ -28,6 +28,7 @@
 
 import type { OHLCV } from "./types.js"
 import { computeMA, lastN } from "./ma.js"
+import { computeRSI, computeMACD } from "./indicators.js"
 
 export type SignalType = "golden_cross" | "death_cross" | "none"
 export type Confidence = "high" | "medium" | "low"
@@ -38,6 +39,8 @@ export interface SignalResult {
   ma25:        number | null
   ma60:        number | null
   crossIndex:  number | null   // bar index where the cross occurred
+  rsi:         number | null   // RSI(14) at latest bar
+  macdHist:    number | null   // MACD(12/26/9) histogram at latest bar
 }
 
 /**
@@ -99,12 +102,16 @@ export function findRecentSignal(
 }
 
 /**
- * Score a signal's reliability.
+ * Score a signal's reliability using 4 confirmation factors.
  *
- * high:   cross confirmed + volume above 10-day avg × 1.2
- *         + price within 15% of MA60
- * medium: one of the two confirmation checks passed
- * low:    cross confirmed but both checks failed
+ * Factor 1 — Volume:    cross-bar volume > 10-day avg × 1.2
+ * Factor 2 — Proximity: latest close within 15% of MA60
+ * Factor 3 — RSI:       RSI(14) > 50 for golden; < 50 for death cross
+ * Factor 4 — MACD:      MACD(12/26/9) histogram ≥ 0 for golden; ≤ 0 for death
+ *
+ * high:   3+ of 4 pass
+ * medium: 2 of 4 pass
+ * low:    0–1 pass
  */
 export function scoreSignal(
   ohlcv: OHLCV[],
@@ -117,33 +124,46 @@ export function scoreSignal(
   const curMa25 = lastN(ma25, 1)[0] ?? null
   const curMa60 = lastN(ma60, 1)[0] ?? null
 
-  if (signal === "none" || crossIndex === null) {
-    return { signal, confidence: "low", ma25: curMa25, ma60: curMa60, crossIndex: null }
-  }
-
   const closes  = ohlcv.map(b => b.close)
   const volumes = ohlcv.map(b => b.volume)
 
-  // Volume check: cross-bar volume > 10-day average × 1.2
+  // Compute RSI and MACD for latest bar (used both in scoring and returned to caller)
+  const rsiSeries  = computeRSI(closes)
+  const macdSeries = computeMACD(closes)
+  const latestRsi  = [...rsiSeries].reverse().find(v => v != null) ?? null
+  const latestHist = [...macdSeries.histogram].reverse().find(v => v != null) ?? null
+
+  if (signal === "none" || crossIndex === null) {
+    return { signal, confidence: "low", ma25: curMa25, ma60: curMa60, crossIndex: null, rsi: latestRsi, macdHist: latestHist }
+  }
+
+  // ── Factor 1: Volume — cross-bar volume > 10-day avg × 1.2 ──────────────
   const recentVol = volumes.slice(Math.max(0, crossIndex - 10), crossIndex)
   const avgVol    = recentVol.length > 0
-    ? recentVol.reduce((s, v) => s + v, 0) / recentVol.length
-    : 0
+    ? recentVol.reduce((s, v) => s + v, 0) / recentVol.length : 0
   const signalVol = volumes[crossIndex] ?? 0
-  const volOk = avgVol > 0 && signalVol > avgVol * 1.2
+  const volOk     = avgVol > 0 && signalVol > avgVol * 1.2
 
-  // Proximity check: latest close within 15% of MA60
+  // ── Factor 2: Proximity — latest close within 15% of MA60 ───────────────
   const latestClose = closes[closes.length - 1] ?? 0
-  const proximityOk = curMa60 !== null
-    ? Math.abs(latestClose - curMa60) / curMa60 <= 0.15
-    : false
+  const proximityOk = curMa60 != null
+    ? Math.abs(latestClose - curMa60) / curMa60 <= 0.15 : false
 
+  // ── Factor 3: RSI directional alignment ──────────────────────────────────
+  const rsiOk = latestRsi != null
+    ? (signal === "golden_cross" ? latestRsi > 50 : latestRsi < 50) : false
+
+  // ── Factor 4: MACD histogram momentum confirmation ───────────────────────
+  const macdOk = latestHist != null
+    ? (signal === "golden_cross" ? latestHist > 0 : latestHist < 0) : false
+
+  const passed = [volOk, proximityOk, rsiOk, macdOk].filter(Boolean).length
   const confidence: Confidence =
-    volOk && proximityOk ? "high"
-    : volOk || proximityOk ? "medium"
+    passed >= 3 ? "high"
+    : passed >= 2 ? "medium"
     : "low"
 
-  return { signal, confidence, ma25: curMa25, ma60: curMa60, crossIndex }
+  return { signal, confidence, ma25: curMa25, ma60: curMa60, crossIndex, rsi: latestRsi, macdHist: latestHist }
 }
 
 /**

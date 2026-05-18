@@ -20,4 +20,6 @@ export interface ChartData {
   signal_date: string | null
   support:     number[]
   resistance:  number[]
+  rsi?:       number | null   // RSI(14) at latest bar
+  macdHist?:  number | null   // MACD(12/26/9) histogram at latest bar
 }

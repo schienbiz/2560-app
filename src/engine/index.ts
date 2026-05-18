@@ -1,6 +1,8 @@
 export { computeMA, lastN } from "./ma.js"
+export { computeEMA, computeRSI, computeMACD } from "./indicators.js"
 export { detectCross, scoreSignal, analyzeSymbol } from "./signal.js"
 export { computeStats } from "./stats.js"
 export type { OHLCV, ChartData, AssetType } from "./types.js"
 export type { SignalType, Confidence, SignalResult } from "./signal.js"
 export type { StatsResult, TradeLike, TradeSummary } from "./stats.js"
+export type { MACDSeries } from "./indicators.js"

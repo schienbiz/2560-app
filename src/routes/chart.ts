@@ -57,6 +57,8 @@ chartRouter.get("/chart/:symbol", async c => {
       signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
       support:     sr.support,
       resistance:  sr.resistance,
+      rsi:         result.rsi,
+      macdHist:    result.macdHist,
     }
 
     return c.json({ ...data, swings: struct.swings })
