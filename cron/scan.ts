@@ -13,7 +13,7 @@ import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
 import { notifyInsight } from "../src/services/ai.js"
-import { fetchCryptoNews, scoreNewsSentiment } from "../src/services/news.js"
+import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
 import type { SentimentResult } from "../src/services/news.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
@@ -99,14 +99,12 @@ export async function runScan() {
             const entryHigh  = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
             const stopLine   = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
-            // Fetch news sentiment for crypto assets (non-blocking; best effort)
+            // Fear & Greed sentiment for crypto assets (free, no API key)
             let sentiment: SentimentResult | undefined
             if (assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
               try {
-                const headlines = await fetchCryptoNews(normalizedSymbol)
-                if (headlines.length) {
-                  sentiment = await scoreNewsSentiment(headlines, signal)
-                }
+                const fg = await fetchFearGreed()
+                if (fg) sentiment = scoreFearGreed(fg, signal)
               } catch {
                 // sentiment is optional — proceed without it
               }

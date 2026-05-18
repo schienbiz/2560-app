@@ -1,58 +1,20 @@
 /**
- * CryptoPanic news feed + LLM sentiment scoring.
+ * Crypto market sentiment via Alternative.me Fear & Greed Index.
  *
- * fetchCryptoNews(symbol)           → string[] of recent headlines (1h cache)
- * scoreNewsSentiment(headlines, signal) → { score: -1|0|1, summary }
+ * fetchFearGreed()           → { value: 0-100, classification: string }
+ * scoreFearGreed(fg, signal) → { score: -1|0|1, summary: string }
  *
- * Requires CRYPTOPANIC_TOKEN in env. Returns empty/neutral if key is missing.
- * Only useful for crypto assets; callers should check asset_type before calling.
+ * No API key required. 1h in-memory cache. Global crypto market sentiment —
+ * useful for all crypto assets.
+ *
+ * Fear + golden cross  = contrarian buy confirmation (score +1)
+ * Greed + death cross  = distribution top confirmation (score +1)
+ * Extreme divergence   = warning (score -1)
  */
 
-import { chat } from "./ai.js"
-
-interface CryptoPanicPost {
-  title:        string
-  published_at: string
-}
-
-interface CacheEntry {
-  headlines: string[]
-  expiresAt: number
-}
-
-const CACHE_TTL = 60 * 60 * 1_000  // 1 hour
-const cache     = new Map<string, CacheEntry>()
-
-// Strip common exchange suffixes so "XBT/USD" → "BTC", "ETH/USDT" → "ETH"
-function toTicker(symbol: string): string {
-  return symbol
-    .replace(/\/.*$/, "")            // remove /USD, /USDT etc.
-    .replace(/USDT?$/, "")           // trailing USDT / USD (no slash)
-    .replace(/XBT/, "BTC")           // Kraken uses XBT
-    .toUpperCase()
-}
-
-export async function fetchCryptoNews(symbol: string): Promise<string[]> {
-  const token = process.env.CRYPTOPANIC_TOKEN
-  if (!token) return []
-
-  const ticker = toTicker(symbol)
-  const now    = Date.now()
-  const hit    = cache.get(ticker)
-  if (hit && hit.expiresAt > now) return hit.headlines
-
-  try {
-    const url = `https://cryptopanic.com/api/v1/posts/?auth_token=${token}&currencies=${encodeURIComponent(ticker)}&filter=hot&public=true`
-    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) })
-    if (!res.ok) return []
-
-    const data   = await res.json() as { results?: CryptoPanicPost[] }
-    const titles = (data.results ?? []).slice(0, 15).map(p => p.title)
-    cache.set(ticker, { headlines: titles, expiresAt: now + CACHE_TTL })
-    return titles
-  } catch {
-    return []
-  }
+export interface FearGreedData {
+  value:              number   // 0 (Extreme Fear) – 100 (Extreme Greed)
+  value_classification: string // "Extreme Fear" | "Fear" | "Neutral" | "Greed" | "Extreme Greed"
 }
 
 export interface SentimentResult {
@@ -60,39 +22,65 @@ export interface SentimentResult {
   summary: string
 }
 
-/**
- * Score whether news headlines support or contradict the technical signal.
- * Returns score 1 (positive/confirming), 0 (neutral), or -1 (negative/contradicting).
- */
-export async function scoreNewsSentiment(
-  headlines: string[],
-  signal:    "golden_cross" | "death_cross"
-): Promise<SentimentResult> {
-  if (!headlines.length) return { score: 0, summary: "無新聞" }
+let cache: { data: FearGreedData; expiresAt: number } | null = null
+const CACHE_TTL = 60 * 60 * 1_000  // 1 hour
 
-  const signalCtx = signal === "golden_cross" ? "黃金交叉（買入訊號）" : "死亡交叉（賣出訊號）"
-  const headlineList = headlines.slice(0, 10).map((h, i) => `${i + 1}. ${h}`).join("\n")
-
-  const prompt = `近期新聞標題：
-${headlineList}
-
-技術訊號：${signalCtx}
-
-判斷新聞情緒是否支持此技術訊號，只回傳 JSON，格式如下（不要有任何說明）：
-{"score":1,"summary":"多頭消息主導"}
-
-score 只能是 1（正面/支持訊號）、0（中性）、-1（負面/與訊號相反）。
-summary 15字以內，繁體中文。`
+export async function fetchFearGreed(): Promise<FearGreedData | null> {
+  const now = Date.now()
+  if (cache && cache.expiresAt > now) return cache.data
 
   try {
-    const raw   = await chat(prompt)
-    const match = raw.match(/\{[^}]+\}/)
-    if (!match) return { score: 0, summary: "中性" }
+    const res = await fetch("https://api.alternative.me/fng/?limit=1", {
+      signal: AbortSignal.timeout(6_000),
+    })
+    if (!res.ok) return null
 
-    const parsed = JSON.parse(match[0]) as { score?: number; summary?: string }
-    const score  = parsed.score === 1 ? 1 : parsed.score === -1 ? -1 : 0
-    return { score, summary: (parsed.summary ?? "中性").slice(0, 20) }
+    const json = await res.json() as { data?: { value: string; value_classification: string }[] }
+    const row  = json.data?.[0]
+    if (!row) return null
+
+    const data: FearGreedData = {
+      value:                parseInt(row.value, 10),
+      value_classification: row.value_classification,
+    }
+    cache = { data, expiresAt: now + CACHE_TTL }
+    return data
   } catch {
-    return { score: 0, summary: "評估失敗" }
+    return null
+  }
+}
+
+/**
+ * Map Fear & Greed value + signal direction to a sentiment score.
+ *
+ * Golden cross:
+ *   Extreme Fear (0–24) or Fear (25–44) → +1  (contrarian confirmation — good entry)
+ *   Neutral (45–55)                      →  0
+ *   Greed (56–74)                        →  0  (risk of buying near top)
+ *   Extreme Greed (75–100)               → -1  (overbought warning)
+ *
+ * Death cross:
+ *   Extreme Greed (75–100) or Greed (56–74) → +1  (distribution top)
+ *   Neutral (45–55)                          →  0
+ *   Fear (25–44)                             →  0
+ *   Extreme Fear (0–24)                      → -1  (oversold, reversal risk)
+ */
+export function scoreFearGreed(
+  fg:     FearGreedData,
+  signal: "golden_cross" | "death_cross"
+): SentimentResult {
+  const v = fg.value
+  const label = `${fg.value_classification}（${v}）`
+
+  if (signal === "golden_cross") {
+    if (v <= 44) return { score:  1, summary: `市場恐懼，逢低佈局機會 ${label}` }
+    if (v <= 55) return { score:  0, summary: `市場中性 ${label}` }
+    if (v <= 74) return { score:  0, summary: `市場偏貪婪，注意風險 ${label}` }
+    return              { score: -1, summary: `極度貪婪，買在高點風險高 ${label}` }
+  } else {
+    if (v >= 56) return { score:  1, summary: `市場貪婪，出貨訊號確認 ${label}` }
+    if (v >= 45) return { score:  0, summary: `市場中性 ${label}` }
+    if (v >= 25) return { score:  0, summary: `市場偏恐懼，反彈風險 ${label}` }
+    return              { score: -1, summary: `極度恐懼，可能超賣反彈 ${label}` }
   }
 }
