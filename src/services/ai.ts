@@ -1,26 +1,29 @@
 /**
- * Shared AI service — NVIDIA NIM primary, Groq fallback.
+ * Shared AI service — NVIDIA NIM → Groq → OpenRouter fallback chain.
  *
- * Primary:  NVIDIA NIM  (meta/llama-3.1-70b-instruct) — better quality
- * Fallback: Groq        (llama-3.1-8b-instant)         — kicks in if NVIDIA fails/times out
+ * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
+ * Fallback1: Groq          (llama-3.3-70b-versatile)            — fast, free
+ * Fallback2: OpenRouter    (meta-llama/llama-3.3-70b-instruct:free) — free tier
  *
- * Set NVIDIA_API_KEY in .env to enable the primary.
- * Set GROQ_API_KEY   in .env to enable the fallback.
- * At least one must be present; having both gives full redundancy.
+ * Set any combination in .env; at least one key must be present.
+ * Each provider is tried in order; the first successful response wins.
  *
  * Two entry points:
- *   analyzeChart(data, question?) → structured 5-point price action analysis
+ *   analyzeChart(data, question?) → structured multi-point price action analysis
  *   chatWithContext(question, ctx) → general bot chat with user's data
  */
 
 import type { ChartData } from "../engine/types.js"
 import { computeStructure } from "../engine/structure.js"
 
-const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+const NVIDIA_URL   = "https://integrate.api.nvidia.com/v1/chat/completions"
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
 
-const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-const GROQ_MODEL = "llama-3.1-8b-instant"
+const GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
+const GROQ_MODEL = "llama-3.3-70b-versatile"
+
+const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
+const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
@@ -32,7 +35,14 @@ const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25�
 
 // ─── Single provider call (OpenAI-compatible) ─────────────────────────────────
 
-async function callProvider(url: string, key: string, model: string, userMsg: string): Promise<string> {
+async function callProvider(
+  label:   string,
+  url:     string,
+  key:     string,
+  model:   string,
+  userMsg: string,
+  extraHeaders?: Record<string, string>
+): Promise<string> {
   const controller = new AbortController()
   const timeout    = setTimeout(() => controller.abort(), 30_000)
 
@@ -42,6 +52,7 @@ async function callProvider(url: string, key: string, model: string, userMsg: st
     headers: {
       "Content-Type":  "application/json",
       "Authorization": `Bearer ${key}`,
+      ...extraHeaders,
     },
     body: JSON.stringify({
       model,
@@ -56,31 +67,48 @@ async function callProvider(url: string, key: string, model: string, userMsg: st
 
   if (!res.ok) {
     const err = await res.text()
-    throw new Error(`${url.includes("nvidia") ? "NVIDIA" : "Groq"} error ${res.status}: ${err}`)
+    throw new Error(`[${label}] error ${res.status}: ${err}`)
   }
 
   const data = await res.json() as { choices: { message: { content: string } }[] }
   return data.choices[0]?.message?.content ?? "無法生成回覆。"
 }
 
-// ─── Chat: NVIDIA primary → Groq fallback ────────────────────────────────────
+// ─── Chat: NVIDIA → Groq → OpenRouter fallback chain ─────────────────────────
 
 export async function chat(userMsg: string): Promise<string> {
-  const nvidiaKey = process.env.NVIDIA_API_KEY
-  const groqKey   = process.env.GROQ_API_KEY
+  const nvidiaKey      = process.env.NVIDIA_API_KEY
+  const groqKey        = process.env.GROQ_API_KEY
+  const openrouterKey  = process.env.OPENROUTER_API_KEY
 
-  if (!nvidiaKey && !groqKey) throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY 或 GROQ_API_KEY）")
+  if (!nvidiaKey && !groqKey && !openrouterKey) {
+    throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY）")
+  }
 
   if (nvidiaKey) {
     try {
-      return await callProvider(NVIDIA_URL, nvidiaKey, NVIDIA_MODEL, userMsg)
+      return await callProvider("NVIDIA", NVIDIA_URL, nvidiaKey, NVIDIA_MODEL, userMsg)
     } catch (err) {
-      console.warn("[ai] NVIDIA failed, falling back to Groq:", (err as Error).message)
-      if (!groqKey) throw err
+      console.warn("[ai] NVIDIA failed:", (err as Error).message)
     }
   }
 
-  return callProvider(GROQ_URL, groqKey!, GROQ_MODEL, userMsg)
+  if (groqKey) {
+    try {
+      return await callProvider("Groq", GROQ_URL, groqKey, GROQ_MODEL, userMsg)
+    } catch (err) {
+      console.warn("[ai] Groq failed:", (err as Error).message)
+    }
+  }
+
+  if (openrouterKey) {
+    return callProvider("OpenRouter", OPENROUTER_URL, openrouterKey, OPENROUTER_MODEL, userMsg, {
+      "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
+      "X-Title":      "2560戰法",
+    })
+  }
+
+  throw new Error("[ai] 所有 AI 服務均失敗")
 }
 
 // ─── Format helpers ───────────────────────────────────────────────────────────
