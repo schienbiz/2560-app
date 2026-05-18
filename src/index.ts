@@ -7,6 +7,7 @@ import { remindersRouter } from "./routes/reminders.js"
 import { scanRouter }      from "./routes/scan.js"
 import { aiRouter }        from "./routes/ai.js"
 import { signalsRouter }   from "./routes/signals.js"
+import { backtestRouter }  from "./routes/backtest.js"
 import { handleLineWebhook }     from "./webhooks/line.js"
 import { handleTelegramWebhook } from "./webhooks/telegram.js"
 import { pulseRouter }           from "./routes/pulse.js"
@@ -26,6 +27,7 @@ app.route("/api/reminders", remindersRouter)
 app.route("/api/scan",      scanRouter)
 app.route("/api/ai",        aiRouter)
 app.route("/api/signals",   signalsRouter)
+app.route("/api/backtest",  backtestRouter)
 
 // ─── Bot webhooks ─────────────────────────────────────────────────────────────
 app.post("/webhook/line",     c => handleLineWebhook(c))

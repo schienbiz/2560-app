@@ -8,6 +8,10 @@
 import { api } from "../api.js";
 import { showToast } from "../app.js";
 
+function esc(s) {
+  return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
 export async function renderStats(container) {
   container.innerHTML = `
     <h2>歷史統計</h2>
@@ -93,9 +97,64 @@ async function loadStats(container) {
 
     body.innerHTML = html;
     bindTips(body);
+
+    // Append signal outcomes section (best-effort — no spinner)
+    loadOutcomes(body);
   } catch {
     body.innerHTML = `<div class="empty">載入失敗，請稍後再試</div>`;
   }
+}
+
+async function loadOutcomes(container) {
+  try {
+    const { outcomes } = await api.get("/api/signals/outcomes");
+    if (!outcomes?.length) return;
+
+    const fmtPct = v => v != null ? (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%" : "—";
+    const fmtRet = v => v != null ? (v >= 0 ? "+" : "") + v.toFixed(1) + "%" : "—";
+    const winColor = v => v == null ? "var(--text)" : v >= 0.5 ? "var(--green)" : "var(--red)";
+
+    const rows = outcomes.map(o => {
+      const isGolden = o.signal === "golden_cross";
+      const label    = isGolden ? "▲ 黃金交叉" : "▼ 死亡交叉";
+      const accent   = isGolden ? "var(--green)" : "var(--red)";
+      return `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px">
+          <div class="row" style="margin-bottom:8px">
+            <span style="font-weight:600;font-size:13px">${esc(o.symbol)}</span>
+            <span style="color:${accent};font-size:12px;font-weight:600">${label}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+            ${outcomeCell("5日", fmtPct(o.win_rate_5d), fmtRet(o.avg_return_5d), winColor(o.win_rate_5d))}
+            ${outcomeCell("10日", fmtPct(o.win_rate_10d), fmtRet(o.avg_return_10d), winColor(o.win_rate_10d))}
+            ${outcomeCell("20日", fmtPct(o.win_rate_20d), fmtRet(o.avg_return_20d), winColor(o.win_rate_20d))}
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:6px">${o.count} 筆已計算</div>
+        </div>`;
+    }).join("");
+
+    const section = document.createElement("div");
+    section.innerHTML = `
+      <div class="card" style="margin-top:8px">
+        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:2px">訊號績效追蹤</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
+          訊號觸發後 N 個交易日的勝率與平均報酬（由每日自動計算）
+        </div>
+        ${rows}
+      </div>`;
+    container.appendChild(section);
+  } catch {
+    // outcomes are non-critical — fail silently
+  }
+}
+
+function outcomeCell(period, winRate, avgRet, color) {
+  return `
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${period}</div>
+      <div style="font-weight:700;font-size:13px;color:${color}">${winRate}</div>
+      <div style="font-size:11px;color:var(--muted)">${avgRet}</div>
+    </div>`;
 }
 
 const TERM_TIPS = {
