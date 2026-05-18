@@ -13,6 +13,7 @@ import { renderChart }     from "./pages/chart.js";
 import { renderTrades }    from "./pages/trades.js";
 import { renderStats }     from "./pages/stats.js";
 import { renderReminders } from "./pages/reminders.js";
+import { renderHelp }      from "./pages/help.js";
 
 // ── State ─────────────────────────────────────────────────────────
 let activeTab = "watchlist";
@@ -26,6 +27,7 @@ const renderers = {
   trades:    renderTrades,
   stats:     renderStats,
   reminders: renderReminders,
+  help:      renderHelp,
 };
 
 // ── Font size (global, persists across all tabs) ──────────────────
