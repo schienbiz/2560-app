@@ -19,6 +19,8 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500)
 })
 
+app.get("/health", c => c.json({ ok: true, service: "2560-app" }))
+
 // ─── API ─────────────────────────────────────────────────────────────────────
 app.route("/api",           chartRouter)
 app.route("/api/watchlist", watchlistRouter)
