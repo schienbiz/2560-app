@@ -13,7 +13,7 @@ jobs:
         run: |
           check() {
             local code
-            code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 20 "$1" 2>/dev/null)
+            code=$(curl -s -o /dev/null -w "%{http_code}" -L --connect-timeout 10 --max-time 40 "$1" 2>/dev/null)
             [ "$code" = "200" ] && echo "OK" || echo "FAIL:${code:-timeout}"
           }
 
