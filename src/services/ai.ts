@@ -3,7 +3,7 @@
  *
  * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
  * Fallback1: Groq          (llama-3.3-70b-versatile)            — fast, free
- * Fallback2: Cerebras      (llama3.3-70b)                       — ultra-fast
+ * Fallback2: Cerebras      (gpt-oss-120b)                       — ultra-fast
  * Fallback3: OpenRouter    (meta-llama/llama-3.3-70b-instruct:free) — free tier
  *
  * Set any combination in .env; at least one key must be present.
@@ -24,7 +24,7 @@ const GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 const GROQ_MODEL = "llama-3.3-70b-versatile"
 
 const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions"
-const CEREBRAS_MODEL = "llama-3.3-70b"
+const CEREBRAS_MODEL = "gpt-oss-120b"
 
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
@@ -143,7 +143,7 @@ export async function multiChat(userMsg: string): Promise<string> {
     return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, providers[0].extraHeaders)
   }
 
-  // Call all providers in parallel (25s per-provider timeout)
+  // Call all providers in parallel (30s per-provider timeout via AbortController)
   const results = await Promise.allSettled(
     providers.map(p => callProvider(p.label, p.url, p.key()!, p.model, userMsg, p.extraHeaders))
   )
