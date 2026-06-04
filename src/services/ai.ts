@@ -1,9 +1,10 @@
 /**
- * Shared AI service — NVIDIA NIM → Groq → OpenRouter fallback chain.
+ * Shared AI service — NVIDIA NIM → Groq → Cerebras → OpenRouter fallback chain.
  *
  * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
  * Fallback1: Groq          (llama-3.3-70b-versatile)            — fast, free
- * Fallback2: OpenRouter    (meta-llama/llama-3.3-70b-instruct:free) — free tier
+ * Fallback2: Cerebras      (llama3.3-70b)                       — ultra-fast
+ * Fallback3: OpenRouter    (meta-llama/llama-3.3-70b-instruct:free) — free tier
  *
  * Set any combination in .env; at least one key must be present.
  * Each provider is tried in order; the first successful response wins.
@@ -21,6 +22,9 @@ const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
 
 const GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
 const GROQ_MODEL = "llama-3.3-70b-versatile"
+
+const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions"
+const CEREBRAS_MODEL = "llama-3.3-70b"
 
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
@@ -93,6 +97,10 @@ function getProviders(): Provider[] {
     {
       label: "Groq", url: GROQ_URL, model: GROQ_MODEL,
       key: () => process.env.GROQ_API_KEY,
+    },
+    {
+      label: "Cerebras", url: CEREBRAS_URL, model: CEREBRAS_MODEL,
+      key: () => process.env.CEREBRAS_API_KEY,
     },
     {
       label: "OpenRouter", url: OPENROUTER_URL, model: OPENROUTER_MODEL,
