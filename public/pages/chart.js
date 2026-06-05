@@ -574,81 +574,219 @@ async function runAiAnalysis(symbol, el) {
 
 // ─── Backtest ─────────────────────────────────────────────────────────────────
 
-async function runBacktest(symbol, el) {
+let _backtestDays = 365;  // persists across open/close toggles
+
+async function runBacktest(symbol, el, days) {
   const btn = document.getElementById("chart-backtest-btn");
-  if (el.style.display === "block") {
+  days = days ?? _backtestDays;
+
+  // Toggle off if same period already showing
+  if (el.style.display === "block" && days === _backtestDays) {
     el.style.display = "none"; el.innerHTML = ""; btn.textContent = "📊 回測"; return;
   }
+  _backtestDays = days;
   btn.disabled = true; btn.textContent = "回測中…";
+  el.style.display = "none";
+
   try {
-    const r = await api.get(`/api/backtest/${symbol}?days=365`);
+    const r = await api.get(`/api/backtest/${symbol}?days=${days}`);
 
     const fmt       = v => v != null ? (v >= 0 ? "+" : "") + v.toFixed(1) + "%" : "—";
     const fmtP      = n => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const fmtF      = v => v != null ? v.toFixed(2) : "—";
+    const col       = v => v != null && v >= 0 ? "var(--green)" : "var(--red)";
+    const colRate   = v => v != null ? (v >= 0.5 ? "var(--green)" : "var(--red)") : "var(--muted)";
     const confColor = c => c === "high" ? "var(--green)" : c === "medium" ? "var(--yellow)" : "var(--muted)";
     const confLabel = c => c === "high" ? "高" : c === "medium" ? "中" : "低";
 
-    const winRateColor  = r.win_rate != null ? (r.win_rate >= 0.5 ? "var(--green)" : "var(--red)") : "var(--muted)";
-    const avgRetColor   = r.avg_return != null ? (r.avg_return >= 0 ? "var(--green)" : "var(--red)") : "var(--muted)";
+    // ── Equity curve SVG ──────────────────────────────────────────────────────
+    function equitySVG(cumulative) {
+      if (!cumulative || cumulative.length < 2) return "";
+      const W = 300, H = 52, pad = 4;
+      const min = Math.min(1, ...cumulative), max = Math.max(1, ...cumulative);
+      const range = max - min || 0.01;
+      const x = i => pad + (i / (cumulative.length - 1)) * (W - 2 * pad);
+      const y = v => H - pad - ((v - min) / range) * (H - 2 * pad);
+      const pts = cumulative.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+      const baselineY = y(1).toFixed(1);
+      const endX = x(cumulative.length - 1).toFixed(1);
+      const endVal = cumulative[cumulative.length - 1];
+      const lineColor = endVal >= 1 ? "#22c55e" : "#ef4444";
+      return `
+        <svg width="${W}" height="${H}" style="display:block;margin:0 auto 6px">
+          <line x1="${pad}" y1="${baselineY}" x2="${W-pad}" y2="${baselineY}"
+                stroke="#333" stroke-width="0.5" stroke-dasharray="3,3"/>
+          <polyline points="${pts}" fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linejoin="round"/>
+          <circle cx="${endX}" cy="${y(endVal).toFixed(1)}" r="2.5" fill="${lineColor}"/>
+        </svg>`;
+    }
 
-    const tradeRows = r.trades.length === 0 ? `<div class="text-muted text-sm" style="margin-top:8px">回測期間無完整交易（未觸發過死亡交叉）</div>` :
-      r.trades.slice(-10).reverse().map(t => {
-        const retColor = t.return_pct > 0 ? "var(--green)" : "var(--red)";
-        return `
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
-            <div>
-              <div style="font-size:12px;color:var(--muted)">${t.entry_date} → ${t.exit_date} (${t.holding_days}天)</div>
-              <div style="font-size:11px;margin-top:2px">
-                <span style="color:var(--muted)">進場 ${fmtP(t.entry_price)} → 出場 ${fmtP(t.exit_price)}</span>
-                <span style="margin-left:4px;color:${confColor(t.confidence)};font-size:10px">信心${confLabel(t.confidence)}（${t.factors_passed}/4）</span>
-              </div>
+    // ── Confidence breakdown table ────────────────────────────────────────────
+    function confTable(byConf) {
+      const row = (label, color, g) => {
+        if (!g || g.count === 0) return `<tr><td style="color:${color}">${label}</td><td colspan="3" style="color:var(--muted);font-size:11px">無訊號</td></tr>`;
+        return `<tr>
+          <td style="color:${color}">${label}</td>
+          <td>${g.count}</td>
+          <td style="color:${colRate(g.win_rate)}">${g.win_rate != null ? (g.win_rate*100).toFixed(0)+"%" : "—"}</td>
+          <td style="color:${col(g.avg_return)}">${fmt(g.avg_return)}</td>
+        </tr>`;
+      };
+      return `
+        <table style="width:100%;font-size:11px;border-collapse:collapse;margin-top:6px">
+          <thead><tr style="color:var(--muted)">
+            <th style="text-align:left;padding:2px 0;font-weight:500">信心</th>
+            <th style="text-align:right;padding:2px 0;font-weight:500">次數</th>
+            <th style="text-align:right;padding:2px 0;font-weight:500">勝率</th>
+            <th style="text-align:right;padding:2px 0;font-weight:500">均報酬</th>
+          </tr></thead>
+          <tbody style="line-height:1.8">
+            ${row("高", "var(--green)", byConf.high)}
+            ${row("中", "var(--yellow)", byConf.medium)}
+            ${row("低", "var(--muted)", byConf.low)}
+          </tbody>
+        </table>`;
+    }
+
+    // ── Trade rows ────────────────────────────────────────────────────────────
+    const allTrades = [...r.trades].reverse();
+    const PREVIEW = 5;
+    function tradeRow(t) {
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px solid var(--border)">
+          <div>
+            <div style="font-size:11px;color:var(--muted)">${t.entry_date} → ${t.exit_date} (${t.holding_days}天)</div>
+            <div style="font-size:10px;margin-top:1px">
+              <span style="color:var(--muted)">${fmtP(t.entry_price)} → ${fmtP(t.exit_price)}</span>
+              <span style="margin-left:4px;color:${confColor(t.confidence)}">信心${confLabel(t.confidence)} ${t.factors_passed}/4</span>
             </div>
-            <span style="font-weight:700;color:${retColor};min-width:50px;text-align:right">${fmt(t.return_pct)}</span>
-          </div>`;
-      }).join("");
+          </div>
+          <span style="font-weight:700;color:${col(t.return_pct)};min-width:48px;text-align:right">${fmt(t.return_pct)}</span>
+        </div>`;
+    }
+    const previewRows = allTrades.slice(0, PREVIEW).map(tradeRow).join("");
+    const extraRows   = allTrades.slice(PREVIEW).map(tradeRow).join("");
+    const showMore    = allTrades.length > PREVIEW;
+
+    const tradeSection = allTrades.length === 0
+      ? `<div class="text-muted text-sm" style="margin-top:8px">回測期間無完整交易（未觸發過死亡交叉）</div>`
+      : `${previewRows}
+         ${showMore ? `<div id="bt-extra" style="display:none">${extraRows}</div>
+           <button id="bt-more-btn" onclick="
+             var x=document.getElementById('bt-extra');
+             var b=document.getElementById('bt-more-btn');
+             if(x.style.display==='none'){x.style.display='block';b.textContent='▲ 收合'}
+             else{x.style.display='none';b.textContent='▼ 顯示全部 ${allTrades.length} 筆'}"
+             style="font-size:11px;color:var(--blue);background:none;border:none;cursor:pointer;padding:6px 0">
+             ▼ 顯示全部 ${allTrades.length} 筆
+           </button>` : ""}`;
 
     const openPosHtml = r.open_position ? `
-      <div style="background:rgba(41,121,255,0.08);border:1px solid rgba(41,121,255,0.2);border-radius:8px;padding:10px;margin-top:8px">
-        <div style="font-size:12px;color:var(--blue);font-weight:600">📌 持倉中（黃金交叉未出場）</div>
-        <div style="font-size:12px;margin-top:4px;color:var(--muted)">進場 ${r.open_position.entry_date} @ ${fmtP(r.open_position.entry_price)}
-        <span style="font-weight:700;color:${r.open_position.unrealized_pct >= 0 ? "var(--green)" : "var(--red)"}">
-          ${fmt(r.open_position.unrealized_pct)} 浮動</span></div>
+      <div style="background:rgba(41,121,255,0.08);border:1px solid rgba(41,121,255,0.2);border-radius:8px;padding:10px;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--blue);font-weight:600">📌 持倉中（黃金交叉尚未出場）</div>
+        <div style="font-size:11px;margin-top:4px;color:var(--muted)">
+          進場 ${r.open_position.entry_date} @ ${fmtP(r.open_position.entry_price)}
+          <span style="font-weight:700;color:${col(r.open_position.unrealized_pct)}"> ${fmt(r.open_position.unrealized_pct)} 浮動</span>
+          <span style="margin-left:6px;color:${confColor(r.open_position.confidence)}">信心${confLabel(r.open_position.confidence)}</span>
+        </div>
       </div>` : "";
+
+    // ── Period toggle ─────────────────────────────────────────────────────────
+    const periodBtns = [365, 730].map(d => `
+      <button onclick="runBacktest('${symbol}', document.getElementById('chart-backtest'), ${d})"
+        style="padding:3px 10px;border-radius:12px;border:1px solid var(--border);font-size:11px;cursor:pointer;
+               background:${d===days?"var(--yellow)":"var(--bg)"};color:${d===days?"#000":"var(--muted)"}">
+        ${d===365?"1年":"2年"}
+      </button>`).join("");
 
     el.innerHTML = `
       <div class="card" style="margin-top:10px;border-top:2px solid var(--yellow)">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
-          <div style="font-size:11px;color:var(--yellow);font-weight:600;letter-spacing:.04em">📊 回測 — 近 365 日</div>
-          <div style="font-size:10px;color:var(--muted)">${r.from_date} → ${r.to_date}</div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div style="font-size:11px;color:var(--yellow);font-weight:600;letter-spacing:.04em">📊 回測 — ${r.from_date} → ${r.to_date}</div>
+          <div style="display:flex;gap:6px">${periodBtns}</div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
-            <div class="text-sm text-muted">勝率</div>
-            <div style="font-size:1.4rem;font-weight:700;color:${winRateColor}">
-              ${r.win_rate != null ? (r.win_rate * 100).toFixed(0) + "%" : "—"}
+        <!-- 6 metric cards -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">勝率</div>
+            <div style="font-size:1.25rem;font-weight:700;color:${colRate(r.win_rate)}">
+              ${r.win_rate != null ? (r.win_rate*100).toFixed(0)+"%" : "—"}
             </div>
-            <div style="font-size:11px;color:var(--muted)">${r.win_count}勝 ${r.loss_count}敗 / ${r.trades.length}次</div>
+            <div style="font-size:10px;color:var(--muted)">${r.win_count}勝 ${r.loss_count}敗</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
-            <div class="text-sm text-muted">平均報酬</div>
-            <div style="font-size:1.4rem;font-weight:700;color:${avgRetColor}">${fmt(r.avg_return)}</div>
-            <div style="font-size:11px;color:var(--muted)">最佳 ${fmt(r.best_trade)} / 最差 ${fmt(r.worst_trade)}</div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">均報酬</div>
+            <div style="font-size:1.25rem;font-weight:700;color:${col(r.avg_return)}">${fmt(r.avg_return)}</div>
+            <div style="font-size:10px;color:var(--muted)">${r.trades.length} 次交易</div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">獲利因子</div>
+            <div style="font-size:1.25rem;font-weight:700;color:${r.profit_factor!=null&&r.profit_factor>=1?"var(--green)":"var(--red)"}">
+              ${r.profit_factor != null ? r.profit_factor.toFixed(2) : "—"}
+            </div>
+            <div style="font-size:10px;color:var(--muted)">總獲利/總虧損</div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">最大回落</div>
+            <div style="font-size:1.25rem;font-weight:700;color:${r.max_drawdown!=null&&r.max_drawdown>15?"var(--red)":"var(--yellow)"}">
+              ${r.max_drawdown != null ? "-"+r.max_drawdown.toFixed(1)+"%" : "—"}
+            </div>
+            <div style="font-size:10px;color:var(--muted)">峰值到谷底</div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">期望值</div>
+            <div style="font-size:1.25rem;font-weight:700;color:${col(r.expectancy)}">${fmt(r.expectancy)}</div>
+            <div style="font-size:10px;color:var(--muted)">每次交易均損益</div>
+          </div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+            <div style="font-size:10px;color:var(--muted)">最佳/最差</div>
+            <div style="font-size:11px;font-weight:700">
+              <span style="color:var(--green)">${fmt(r.best_trade)}</span>
+              <span style="color:var(--muted)"> / </span>
+              <span style="color:var(--red)">${fmt(r.worst_trade)}</span>
+            </div>
+            <div style="font-size:10px;color:var(--muted)">均勝 ${fmt(r.avg_win)} 均敗 ${fmt(r.avg_loss)}</div>
           </div>
         </div>
+
+        <!-- Equity curve -->
+        ${r.cumulative && r.cumulative.length >= 2 ? `
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:4px">累積資金曲線（各交易複利）</div>
+          ${equitySVG(r.cumulative)}
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)">
+            <span>起始 1.00</span>
+            <span style="color:${col(r.cumulative[r.cumulative.length-1]-1)}">
+              終點 ${r.cumulative[r.cumulative.length-1].toFixed(3)}
+              (${fmt((r.cumulative[r.cumulative.length-1]-1)*100)})
+            </span>
+          </div>
+        </div>` : ""}
 
         ${openPosHtml}
 
-        <div style="margin-top:8px">
-          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:4px">最近 10 筆交易</div>
-          ${tradeRows}
+        <!-- Confidence breakdown -->
+        ${r.by_confidence ? `
+        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
+          <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:2px">4因子信心分組表現</div>
+          ${confTable(r.by_confidence)}
+        </div>` : ""}
+
+        <!-- Trades -->
+        <div>
+          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:4px">交易記錄</div>
+          ${tradeSection}
         </div>
+
         <div style="font-size:10px;color:var(--muted);margin-top:10px">
-          僅供回測參考。進場=黃金交叉收盤價，出場=死亡交叉收盤價，不含手續費/滑價。
+          進場=黃金交叉收盤，出場=死亡交叉收盤。不含手續費/滑價。回測為事後統計，不代表未來績效。
         </div>
       </div>`;
 
-    el.style.display = "block"; btn.textContent = "📊 收起回測";
+    el.style.display = "block";
+    btn.textContent = "📊 收起回測";
   } catch (err) {
     const msg = err instanceof ApiError && err.status === 400 ? "資料不足，無法回測" : "回測失敗，請稍後再試";
     showToast(msg); btn.textContent = "📊 回測";

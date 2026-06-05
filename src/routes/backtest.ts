@@ -3,7 +3,8 @@
  *
  * GET /api/backtest/:symbol?days=365
  *   Returns BacktestResult: all golden→death round trips, 4-factor confidence
- *   per entry, win rate, avg return, best/worst trade.
+ *   per entry, win rate, avg return, profit factor, max drawdown, expectancy,
+ *   equity curve, and by-confidence breakdown.  Max days: 1095 (3 years).
  *   No auth required — same as chart data.
  */
 
@@ -16,7 +17,7 @@ export const backtestRouter = new Hono()
 
 backtestRouter.get("/:symbol", async c => {
   const symbol = c.req.param("symbol").toUpperCase()
-  const days   = Math.min(parseInt(c.req.query("days") ?? "365", 10), 730)
+  const days   = Math.min(parseInt(c.req.query("days") ?? "365", 10), 1095)
 
   try {
     const { adapter, normalizedSymbol } = getAdapter(symbol)

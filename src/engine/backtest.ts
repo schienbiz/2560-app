@@ -36,19 +36,33 @@ export interface OpenPosition {
   unrealized_pct: number        // vs. last available close
 }
 
+export interface ConfidenceGroup {
+  count:      number
+  win_count:  number
+  win_rate:   number | null
+  avg_return: number | null
+}
+
 export interface BacktestResult {
-  symbol:      string
-  bars:        number
-  from_date:   string
-  to_date:     string
-  trades:      BacktestTrade[]
+  symbol:        string
+  bars:          number
+  from_date:     string
+  to_date:       string
+  trades:        BacktestTrade[]
   open_position: OpenPosition | null
-  win_count:   number
-  loss_count:  number
-  win_rate:    number | null    // null when no closed trades
-  avg_return:  number | null
-  best_trade:  number | null
-  worst_trade: number | null
+  win_count:     number
+  loss_count:    number
+  win_rate:      number | null
+  avg_return:    number | null
+  avg_win:       number | null  // avg return of winning trades
+  avg_loss:      number | null  // avg return of losing trades (negative)
+  best_trade:    number | null
+  worst_trade:   number | null
+  profit_factor: number | null  // gross_profit / |gross_loss|
+  max_drawdown:  number | null  // max peak-to-trough in cumulative equity, as %
+  expectancy:    number | null  // win_rate*avg_win + loss_rate*avg_loss
+  cumulative:    number[]       // cumulative equity curve (1.0 = starting capital)
+  by_confidence: { high: ConfidenceGroup; medium: ConfidenceGroup; low: ConfidenceGroup }
 }
 
 export function runBacktest(symbol: string, ohlcv: OHLCV[]): BacktestResult {
@@ -58,7 +72,14 @@ export function runBacktest(symbol: string, ohlcv: OHLCV[]): BacktestResult {
       from_date: ohlcv[0]?.date ?? "", to_date: ohlcv.at(-1)?.date ?? "",
       trades: [], open_position: null,
       win_count: 0, loss_count: 0, win_rate: null, avg_return: null,
-      best_trade: null, worst_trade: null,
+      avg_win: null, avg_loss: null, best_trade: null, worst_trade: null,
+      profit_factor: null, max_drawdown: null, expectancy: null,
+      cumulative: [],
+      by_confidence: {
+        high:   { count: 0, win_count: 0, win_rate: null, avg_return: null },
+        medium: { count: 0, win_count: 0, win_rate: null, avg_return: null },
+        low:    { count: 0, win_count: 0, win_rate: null, avg_return: null },
+      },
     }
   }
 
@@ -133,19 +154,77 @@ export function runBacktest(symbol: string, ohlcv: OHLCV[]): BacktestResult {
   const returns   = trades.map(t => t.return_pct)
   const winCount  = returns.filter(r => r > 0).length
   const lossCount = returns.filter(r => r <= 0).length
+  const wins      = returns.filter(r => r > 0)
+  const losses    = returns.filter(r => r <= 0)
+
+  const avg = (arr: number[]) => arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null
+
+  const grossProfit = wins.reduce((s, v) => s + v, 0)
+  const grossLoss   = Math.abs(losses.reduce((s, v) => s + v, 0))
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : null)
+
+  // Equity curve: cumulative product starting at 1.0
+  const cumulative: number[] = []
+  let equity = 1.0
+  for (const t of trades) {
+    equity *= (1 + t.return_pct / 100)
+    cumulative.push(parseFloat(equity.toFixed(4)))
+  }
+
+  // Max drawdown from equity curve peaks
+  let maxDD = 0
+  let peak = 1.0
+  let cur  = 1.0
+  for (const t of trades) {
+    cur *= (1 + t.return_pct / 100)
+    if (cur > peak) peak = cur
+    const dd = (peak - cur) / peak * 100
+    if (dd > maxDD) maxDD = dd
+  }
+
+  // By-confidence breakdown
+  const confGroup = (level: "high" | "medium" | "low"): ConfidenceGroup => {
+    const ts = trades.filter(t => t.confidence === level)
+    const wc = ts.filter(t => t.return_pct > 0).length
+    return {
+      count:      ts.length,
+      win_count:  wc,
+      win_rate:   ts.length > 0 ? wc / ts.length : null,
+      avg_return: avg(ts.map(t => t.return_pct)),
+    }
+  }
+
+  const avgWin  = avg(wins)
+  const avgLoss = avg(losses)
+  const winRate = returns.length > 0 ? winCount / returns.length : null
+  const lossRate = winRate != null ? 1 - winRate : null
+  const expectancy = (avgWin != null && avgLoss != null && winRate != null && lossRate != null)
+    ? winRate * avgWin + lossRate * avgLoss
+    : null
 
   return {
     symbol,
-    bars:      ohlcv.length,
-    from_date: ohlcv[0].date,
-    to_date:   lastDate,
+    bars:          ohlcv.length,
+    from_date:     ohlcv[0].date,
+    to_date:       lastDate,
     trades,
     open_position: openPosition,
-    win_count:  winCount,
-    loss_count: lossCount,
-    win_rate:   returns.length > 0 ? winCount / returns.length : null,
-    avg_return: returns.length > 0 ? returns.reduce((s, r) => s + r, 0) / returns.length : null,
-    best_trade:  returns.length > 0 ? Math.max(...returns) : null,
-    worst_trade: returns.length > 0 ? Math.min(...returns) : null,
+    win_count:     winCount,
+    loss_count:    lossCount,
+    win_rate:      winRate,
+    avg_return:    avg(returns),
+    avg_win:       avgWin,
+    avg_loss:      avgLoss,
+    best_trade:    returns.length > 0 ? Math.max(...returns) : null,
+    worst_trade:   returns.length > 0 ? Math.min(...returns) : null,
+    profit_factor: profitFactor === Infinity ? null : profitFactor,
+    max_drawdown:  returns.length > 0 ? parseFloat(maxDD.toFixed(2)) : null,
+    expectancy:    expectancy != null ? parseFloat(expectancy.toFixed(2)) : null,
+    cumulative,
+    by_confidence: {
+      high:   confGroup("high"),
+      medium: confGroup("medium"),
+      low:    confGroup("low"),
+    },
   }
 }
