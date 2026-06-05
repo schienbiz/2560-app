@@ -4,7 +4,7 @@
  * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
  * Fallback1: Groq          (llama-3.3-70b-versatile)            — fast, free
  * Fallback2: Cerebras      (gpt-oss-120b)                       — ultra-fast
- * Fallback3: OpenRouter    (meta-llama/llama-3.3-70b-instruct:free) — free tier
+ * Fallback3: OpenRouter    (moonshotai/kimi-k2.6:free) — 262k ctx, strong trading language
  *
  * Set any combination in .env; at least one key must be present.
  * Each provider is tried in order; the first successful response wins.
@@ -27,7 +27,7 @@ const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions"
 const CEREBRAS_MODEL = "gpt-oss-120b"
 
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
-const OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+const OPENROUTER_MODEL = "moonshotai/kimi-k2.6:free"
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
