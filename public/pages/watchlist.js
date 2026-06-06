@@ -100,7 +100,7 @@ function strategyIntroCard() {
   const dismissed = localStorage.getItem("wl-intro-dismissed") === "1";
   if (dismissed) return "";
   return `
-    <div id="wl-intro" class="card" style="margin-bottom:16px;border-color:#2979ff44;background:#2979ff0d">
+    <div id="wl-intro" class="card" style="margin-bottom:16px;border-color:rgba(59,130,246,0.3);background:var(--blue-dim)">
       <div class="row" style="align-items:flex-start">
         <div style="flex:1">
           <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:6px">什麼是 2560 戰法？</div>
@@ -208,7 +208,7 @@ function renderRow(item) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0">
           <span id="wl-signal-${sid}">${badge}</span>
           <div style="display:flex;gap:6px">
-            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-fast-period="${item.alert?.fast_period ?? 25}" data-slow-period="${item.alert?.slow_period ?? 60}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:5px 9px;font-size:14px;min-height:34px" title="設定">⚙</button>
+            <button class="btn secondary wl-settings" data-id="${item.id}" data-symbol="${esc(item.symbol)}" data-label="${esc(item.label || "")}" data-on-golden="${item.alert?.on_golden ?? true}" data-on-death="${item.alert?.on_death ?? true}" data-active="${item.alert?.active ?? true}" data-proximity-threshold="${item.alert?.proximity_threshold ?? 0.015}" data-fast-period="${item.alert?.fast_period ?? 25}" data-slow-period="${item.alert?.slow_period ?? 60}" data-ma25="${item.lastSignal?.ma25 ?? ""}" style="padding:6px 10px;font-size:14px;min-height:40px" title="設定">⚙</button>
           </div>
         </div>
       </div>

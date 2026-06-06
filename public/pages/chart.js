@@ -321,15 +321,15 @@ function renderAnalysisCard(el, data, barsAgo) {
 
   el.innerHTML = `
     <div class="card" style="margin-top:10px">
-      <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:10px">進退場分析</div>
+      <div class="section-label" style="margin-bottom:10px">進退場分析</div>
 
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div class="text-sm text-muted">進場建議</div>
           <div style="font-weight:700;color:${entryColor};margin-top:2px">${entryLabel}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4">${entryDesc}</div>
         </div>
-        <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div class="text-sm text-muted">MA 距離</div>
           <div style="font-weight:700;color:${maGapPct >= 0 ? "var(--green)" : "var(--red)"};margin-top:2px">
             ${maGapPct >= 0 ? "+" : ""}${maGapPct.toFixed(1)}%
@@ -341,12 +341,12 @@ function renderAnalysisCard(el, data, barsAgo) {
       </div>
 
       <div style="display:flex;gap:8px;margin-bottom:8px">
-        <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div class="text-sm text-muted">RSI(14)</div>
           <div style="font-weight:700;color:${rsiColor};margin-top:2px">${rsiVal}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px">${rsiLabel}</div>
         </div>
-        <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div class="text-sm text-muted">MACD 柱狀</div>
           <div style="font-weight:700;color:${macdColor};margin-top:2px">${macdVal}</div>
           <div style="font-size:11px;color:var(--muted);margin-top:3px">${macdLabel}</div>
@@ -354,11 +354,11 @@ function renderAnalysisCard(el, data, barsAgo) {
       </div>
 
       <div style="display:flex;gap:8px">
-        <div style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px">
           <div class="text-sm text-muted">理想進場區 <span style="font-size:10px">(MA25 附近)</span></div>
           <div style="font-weight:600;font-size:13px;margin-top:4px">${entryLow} – ${entryHigh}</div>
         </div>
-        <div style="flex:1;background:var(--bg);border:1px solid ${stopWarn ? "var(--red)" : "var(--border)"};border-radius:8px;padding:10px">
+        <div style="flex:1;background:var(--surface-2);border:1px solid ${stopWarn ? "var(--red)" : "var(--border)"};border-radius:8px;padding:10px">
           <div class="text-sm" style="color:${stopWarn ? "var(--red)" : "var(--muted)"};font-weight:${stopWarn ? 600 : 400}">
             策略停損 <span style="font-size:10px">(MA60)</span>
           </div>
@@ -371,7 +371,7 @@ function renderAnalysisCard(el, data, barsAgo) {
 
       <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
         <button id="analysis-legend-toggle" style="background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:0;display:flex;align-items:center;gap:4px;-webkit-tap-highlight-color:transparent">
-          <span id="analysis-legend-arrow">▶</span> 判斷邏輯說明
+          <span id="analysis-legend-arrow" style="display:inline-block;transition:transform .2s">▶</span> 判斷邏輯說明
         </button>
         <div id="analysis-legend" style="display:none;margin-top:8px;font-size:11px;line-height:1.8;color:var(--muted)">
           <div><span style="color:var(--green);font-weight:600">● 適合進場</span>　黃金交叉 ≤5 天，且價格距 MA25 不超過 5%</div>
@@ -393,8 +393,8 @@ function renderAnalysisCard(el, data, barsAgo) {
     const legend = el.querySelector("#analysis-legend");
     const arrow  = el.querySelector("#analysis-legend-arrow");
     const open   = legend.style.display === "none";
-    legend.style.display = open ? "block" : "none";
-    arrow.textContent    = open ? "▼" : "▶";
+    legend.style.display    = open ? "block" : "none";
+    arrow.style.transform   = open ? "rotate(90deg)" : "";
   });
 }
 
@@ -406,11 +406,11 @@ function buildChart(el, data) {
 
   el.innerHTML = `
     <div id="chart-main"  style="height:240px"></div>
-    <div id="chart-rsi"   style="height:88px;border-top:1px solid #2a2a2a;position:relative">
-      <span style="position:absolute;top:4px;left:8px;font-size:10px;color:#555;z-index:1;pointer-events:none">RSI(14)</span>
+    <div id="chart-rsi"   style="height:88px;border-top:1px solid #303030;position:relative">
+      <span style="position:absolute;top:4px;left:8px;font-size:10px;color:#777;z-index:1;pointer-events:none">RSI(14)</span>
     </div>
-    <div id="chart-macd"  style="height:88px;border-top:1px solid #2a2a2a;position:relative">
-      <span style="position:absolute;top:4px;left:8px;font-size:10px;color:#555;z-index:1;pointer-events:none">MACD(12/26/9)</span>
+    <div id="chart-macd"  style="height:88px;border-top:1px solid #303030;position:relative">
+      <span style="position:absolute;top:4px;left:8px;font-size:10px;color:#777;z-index:1;pointer-events:none">MACD(12/26/9)</span>
     </div>
   `;
 
@@ -420,22 +420,22 @@ function buildChart(el, data) {
   const w      = el.offsetWidth || 360;
 
   const base = {
-    layout:    { background: { color: "#1a1a1a" }, textColor: "#666" },
-    grid:      { vertLines: { color: "#1e1e1e" }, horzLines: { color: "#1e1e1e" } },
+    layout:    { background: { color: "#1a1a1a" }, textColor: "#777" },
+    grid:      { vertLines: { color: "#1d1d1d" }, horzLines: { color: "#1d1d1d" } },
     crosshair: { mode: LC.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: "#2a2a2a", minimumWidth: 60 },
+    rightPriceScale: { borderColor: "#303030", minimumWidth: 60 },
     handleScroll: true,
     handleScale:  true,
   };
 
   const mainChart = LC.createChart(mainEl, { ...base, width: w, height: 240,
-    timeScale: { borderColor: "#2a2a2a", timeVisible: true, visible: false },
+    timeScale: { borderColor: "#303030", timeVisible: true, visible: false },
   });
   const rsiChart  = LC.createChart(rsiEl,  { ...base, width: w, height: 88,
-    timeScale: { borderColor: "#2a2a2a", visible: false },
+    timeScale: { borderColor: "#303030", visible: false },
   });
   const macdChart = LC.createChart(macdEl, { ...base, width: w, height: 88,
-    timeScale: { borderColor: "#2a2a2a", timeVisible: true, visible: true },
+    timeScale: { borderColor: "#303030", timeVisible: true, visible: true },
   });
 
   chartInstances = [mainChart, rsiChart, macdChart];
@@ -443,16 +443,16 @@ function buildChart(el, data) {
 
   // ── Main: candlesticks ───────────────────────────────────────────────────
   const candles = mainChart.addCandlestickSeries({
-    upColor: "#00c853", downColor: "#ff1744",
-    borderUpColor: "#00c853", borderDownColor: "#ff1744",
-    wickUpColor:   "#00c853", wickDownColor:   "#ff1744",
+    upColor: "#00d664", downColor: "#ff1744",
+    borderUpColor: "#00d664", borderDownColor: "#ff1744",
+    wickUpColor:   "#00d664", wickDownColor:   "#ff1744",
   });
   candles.setData(data.ohlcv.map(b => ({ time: b.date, open: b.open, high: b.high, low: b.low, close: b.close })));
 
   // Swing markers
   if (data.swings?.length && localStorage.getItem("showSwings") !== "false") {
     const STYLE = {
-      HH: { position: "aboveBar", color: "#00c853", shape: "arrowUp",   text: "HH" },
+      HH: { position: "aboveBar", color: "#00d664", shape: "arrowUp",   text: "HH" },
       HL: { position: "belowBar", color: "#69f0ae", shape: "arrowDown",  text: "HL" },
       LH: { position: "aboveBar", color: "#ff5252", shape: "arrowUp",   text: "LH" },
       LL: { position: "belowBar", color: "#ff1744", shape: "arrowDown",  text: "LL" },
@@ -464,7 +464,7 @@ function buildChart(el, data) {
 
   // MA25 + MA60
   if (data.ma25?.length) {
-    const s = mainChart.addLineSeries({ color: "#2979ff", lineWidth: 1, title: "MA25", lastValueVisible: true, priceLineVisible: false });
+    const s = mainChart.addLineSeries({ color: "#3b82f6", lineWidth: 1, title: "MA25", lastValueVisible: true, priceLineVisible: false });
     s.setData(data.ohlcv.map((b, i) => ({ time: b.date, value: data.ma25[i] })).filter(p => p.value != null));
   }
   if (data.ma60?.length) {
@@ -475,7 +475,7 @@ function buildChart(el, data) {
   // Support / Resistance
   if (data.support?.length) {
     for (const lvl of data.support) {
-      candles.createPriceLine({ price: lvl, color: "rgba(0,200,83,.5)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "S" });
+      candles.createPriceLine({ price: lvl, color: "rgba(0,214,100,.5)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "S" });
     }
   }
   if (data.resistance?.length) {
@@ -514,12 +514,12 @@ function buildChart(el, data) {
       .map((b, i) => macdData.histogram[i] != null ? {
         time:  b.date,
         value: macdData.histogram[i],
-        color: macdData.histogram[i] >= 0 ? "rgba(0,200,83,0.7)" : "rgba(255,23,68,0.7)",
+        color: macdData.histogram[i] >= 0 ? "rgba(0,214,100,0.7)" : "rgba(255,23,68,0.7)",
       } : null)
       .filter(Boolean)
   );
 
-  const macdLineSeries = macdChart.addLineSeries({ color: "#2979ff", lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+  const macdLineSeries = macdChart.addLineSeries({ color: "#3b82f6", lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
   macdLineSeries.setData(
     data.ohlcv.map((b, i) => macdData.macd[i] != null ? { time: b.date, value: macdData.macd[i] } : null).filter(Boolean)
   );
@@ -682,7 +682,7 @@ async function runBacktest(symbol, el, days) {
            </button>` : ""}`;
 
     const openPosHtml = r.open_position ? `
-      <div style="background:rgba(41,121,255,0.08);border:1px solid rgba(41,121,255,0.2);border-radius:8px;padding:10px;margin-bottom:10px">
+      <div style="background:var(--blue-dim);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:10px;margin-bottom:10px">
         <div style="font-size:11px;color:var(--blue);font-weight:600">📌 持倉中（黃金交叉尚未出場）</div>
         <div style="font-size:11px;margin-top:4px;color:var(--muted)">
           進場 ${r.open_position.entry_date} @ ${fmtP(r.open_position.entry_price)}
@@ -709,38 +709,38 @@ async function runBacktest(symbol, el, days) {
 
         <!-- 6 metric cards -->
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">勝率</div>
             <div style="font-size:1.25rem;font-weight:700;color:${colRate(r.win_rate)}">
               ${r.win_rate != null ? (r.win_rate*100).toFixed(0)+"%" : "—"}
             </div>
             <div style="font-size:10px;color:var(--muted)">${r.win_count}勝 ${r.loss_count}敗</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">均報酬</div>
             <div style="font-size:1.25rem;font-weight:700;color:${col(r.avg_return)}">${fmt(r.avg_return)}</div>
             <div style="font-size:10px;color:var(--muted)">${r.trades.length} 次交易</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">獲利因子</div>
             <div style="font-size:1.25rem;font-weight:700;color:${r.profit_factor!=null&&r.profit_factor>=1?"var(--green)":"var(--red)"}">
               ${r.profit_factor != null ? r.profit_factor.toFixed(2) : "—"}
             </div>
             <div style="font-size:10px;color:var(--muted)">總獲利/總虧損</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">最大回落</div>
             <div style="font-size:1.25rem;font-weight:700;color:${r.max_drawdown!=null&&r.max_drawdown>15?"var(--red)":"var(--yellow)"}">
               ${r.max_drawdown != null ? "-"+r.max_drawdown.toFixed(1)+"%" : "—"}
             </div>
             <div style="font-size:10px;color:var(--muted)">峰值到谷底</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">期望值</div>
             <div style="font-size:1.25rem;font-weight:700;color:${col(r.expectancy)}">${fmt(r.expectancy)}</div>
             <div style="font-size:10px;color:var(--muted)">每次交易均損益</div>
           </div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px">
+          <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px">
             <div style="font-size:10px;color:var(--muted)">最佳/最差</div>
             <div style="font-size:11px;font-weight:700">
               <span style="color:var(--green)">${fmt(r.best_trade)}</span>
@@ -753,7 +753,7 @@ async function runBacktest(symbol, el, days) {
 
         <!-- Equity curve -->
         ${r.cumulative && r.cumulative.length >= 2 ? `
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
           <div style="font-size:10px;color:var(--muted);margin-bottom:4px">累積資金曲線（各交易複利）</div>
           ${equitySVG(r.cumulative)}
           <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)">
@@ -769,14 +769,14 @@ async function runBacktest(symbol, el, days) {
 
         <!-- Confidence breakdown -->
         ${r.by_confidence ? `
-        <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
-          <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:2px">4因子信心分組表現</div>
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px">
+          <div class="section-label" style="margin-bottom:4px">4因子信心分組表現</div>
           ${confTable(r.by_confidence)}
         </div>` : ""}
 
         <!-- Trades -->
         <div>
-          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:4px">交易記錄</div>
+          <div class="section-label" style="margin-bottom:4px">交易記錄</div>
           ${tradeSection}
         </div>
 
