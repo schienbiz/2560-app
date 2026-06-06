@@ -57,6 +57,42 @@ async function replyMessage(replyToken: string, text: string) {
   })
 }
 
+async function sendWelcomeMessage(replyToken: string) {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
+  if (!token) return
+
+  const liffId  = process.env.LIFF_ID
+  const appUrl  = liffId ? `https://miniapp.line.me/${liffId}` : (process.env.APP_URL ?? "https://two560-app.onrender.com")
+
+  await fetch("https://api.line.me/v2/bot/message/reply", {
+    method:  "POST",
+    headers: {
+      "Content-Type":  "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: [
+        {
+          type: "text",
+          text: "👋 歡迎使用 2560戰法助理！\n\n我會根據您的自選清單和交易記錄回答問題。\n\n可以問我：\n• BTCUSDT 現在有訊號嗎？\n• 我的自選清單有哪些？\n• 幫我分析 TSLA\n• 我最近的勝率如何？",
+        },
+        {
+          type:    "template",
+          altText: "開啟 2560戰法 App",
+          template: {
+            type: "buttons",
+            text: "點下方開啟完整 App",
+            actions: [
+              { type: "uri", label: "📊 開啟 2560戰法 App", uri: appUrl },
+            ],
+          },
+        },
+      ],
+    }),
+  })
+}
+
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
 export async function handleLineWebhook(c: Context): Promise<Response> {
@@ -76,6 +112,11 @@ export async function handleLineWebhook(c: Context): Promise<Response> {
 
   // Process events concurrently (fire-and-forget per LINE recommendation)
   await Promise.allSettled(body.events.map(async event => {
+    if (event.type === "follow") {
+      await sendWelcomeMessage(event.replyToken)
+      return
+    }
+
     if (event.type !== "message") return
     if (event.message?.type !== "text") return
 
