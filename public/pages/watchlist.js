@@ -235,8 +235,8 @@ async function runScan(container) {
     }
     resultsEl.innerHTML = `
       <div class="card" style="margin-bottom:16px">
-        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:10px">
-          即時掃描結果 — ${new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" })}
+        <div class="section-label" style="margin-bottom:10px">
+          即時掃描 &nbsp;·&nbsp; ${new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit" })}
         </div>
         ${results.map(renderScanRow).join("")}
       </div>

@@ -11,18 +11,25 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0f0f0f;
-      --surface:  #1a1a1a;
-      --border:   #2a2a2a;
-      --text:     #e8e8e8;
-      --muted:    #888;
-      --green:    #00c853;
-      --red:      #ff1744;
-      --yellow:   #ffd600;
-      --blue:     #2979ff;
-      --tab-h:    62px;
-      --safe-t:   env(safe-area-inset-top, 0px);
-      --safe-b:   env(safe-area-inset-bottom, 0px);
+      --bg:         #0d0d0d;
+      --surface:    #1a1a1a;
+      --surface-2:  #212121;
+      --border:     #303030;
+      --text:       #e8e8e8;
+      --muted:      #9a9a9a;
+      --green:      #00d664;
+      --red:        #ff1744;
+      --yellow:     #ffd600;
+      --blue:       #3b82f6;
+      --blue-dim:   rgba(59,130,246,0.12);
+      --green-dim:  rgba(0,214,100,0.12);
+      --red-dim:    rgba(255,23,68,0.12);
+      --tab-h:      62px;
+      --safe-t:     env(safe-area-inset-top, 0px);
+      --safe-b:     env(safe-area-inset-bottom, 0px);
+      --radius-sm:  8px;
+      --radius-md:  12px;
+      --radius-lg:  16px;
     }
 
     html, body {
@@ -73,41 +80,56 @@
 
     .tab {
       flex: 1;
+      position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 3px;
+      gap: 4px;
       cursor: pointer;
       color: var(--muted);
-      font-size: 0.8rem;
-      transition: color .15s;
+      font-size: 0.78rem;
+      transition: color .2s;
       -webkit-tap-highlight-color: transparent;
     }
     .tab.active { color: var(--blue); }
-    .tab svg { width: 24px; height: 24px; }
+    .tab.active::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 28px;
+      height: 2px;
+      background: var(--blue);
+      border-radius: 0 0 3px 3px;
+    }
+    .tab svg { width: 22px; height: 22px; }
 
     /* ── Common UI ──────────────────────────────────────────── */
     .card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius-md);
       padding: 14px;
-      margin-bottom: 10px;
+      margin-bottom: 12px;
     }
+    .card.clickable { cursor: pointer; }
+    .card.clickable:active { opacity: .85; }
 
     .badge {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      padding: 2px 8px;
+      gap: 3px;
+      font-size: 0.73rem;
+      font-weight: 700;
+      padding: 3px 9px;
       border-radius: 100px;
+      letter-spacing: 0.01em;
     }
-    .badge.green  { background: rgba(0,200,83,.15);  color: var(--green); }
-    .badge.red    { background: rgba(255,23,68,.15);  color: var(--red);   }
-    .badge.muted  { background: var(--border);         color: var(--muted); }
+    .badge.green  { background: var(--green-dim);  color: var(--green); }
+    .badge.red    { background: var(--red-dim);    color: var(--red);   }
+    .badge.muted  { background: var(--border);     color: var(--muted); }
 
     .btn {
       display: inline-flex;
@@ -116,32 +138,34 @@
       gap: 6px;
       min-height: 44px;
       padding: 10px 16px;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       border: none;
       font-size: 1rem;
       font-weight: 600;
       cursor: pointer;
-      transition: opacity .15s;
+      transition: opacity .15s, transform .1s;
       -webkit-tap-highlight-color: transparent;
     }
-    .btn:active { opacity: .7; }
+    .btn:active { opacity: .72; transform: scale(0.98); }
     .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     .btn.primary   { background: var(--blue);   color: #fff; }
-    .btn.secondary { background: var(--border); color: var(--text); }
-    .btn.danger    { background: rgba(255,23,68,.15); color: var(--red); }
+    .btn.secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+    .btn.danger    { background: var(--red-dim); color: var(--red); }
     .btn.full      { width: 100%; }
 
     input, textarea, select {
       width: 100%;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: var(--text);
       padding: 10px 12px;
       font-size: 1rem;
       outline: none;
+      transition: border-color .15s;
     }
     input:focus, textarea:focus { border-color: var(--blue); }
+    select { cursor: pointer; }
 
     label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 4px; }
 
@@ -154,17 +178,27 @@
       gap: 8px;
     }
 
-    .divider { height: 1px; background: var(--border); margin: 12px 0; }
+    .divider { height: 1px; background: var(--border); margin: 14px 0; }
 
     .empty {
       text-align: center;
       color: var(--muted);
-      padding: 48px 24px;
+      padding: 52px 24px;
       font-size: 0.9rem;
+      line-height: 1.75;
     }
 
-    h2 { font-size: 1.25rem; font-weight: 700; margin-bottom: 16px; }
+    h2 { font-size: 1.3rem; font-weight: 700; margin-bottom: 16px; }
     h3 { font-size: 1.05rem; font-weight: 600; }
+
+    .section-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
 
     .text-green { color: var(--green); }
     .text-red   { color: var(--red);   }
@@ -186,24 +220,28 @@
     /* ── Toast ──────────────────────────────────────────────── */
     #toast {
       position: fixed;
-      bottom: calc(var(--tab-h) + var(--safe-b) + 16px);
+      bottom: calc(var(--tab-h) + var(--safe-b) + 18px);
       left: 50%;
-      transform: translateX(-50%);
-      background: #333;
+      transform: translateX(-50%) translateY(4px);
+      background: rgba(36,36,36,0.96);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       color: #fff;
-      padding: 10px 18px;
-      border-radius: 20px;
+      padding: 10px 20px;
+      border-radius: 22px;
       font-size: 0.9rem;
       z-index: 999;
       opacity: 0;
-      transition: opacity .2s;
+      transition: opacity .22s, transform .22s;
       pointer-events: none;
       white-space: normal;
-      max-width: calc(100% - 48px);
+      max-width: calc(100% - 80px);
       text-align: center;
       line-height: 1.5;
+      box-shadow: 0 4px 20px rgba(0,0,0,.55);
+      border: 1px solid rgba(255,255,255,0.06);
     }
-    #toast.show { opacity: 1; }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
     /* ── Sheet (bottom drawer) ──────────────────────────────── */
     .sheet-overlay {
@@ -211,6 +249,8 @@
       position: fixed; inset: 0;
       background: rgba(0,0,0,.6);
       z-index: 200;
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
     }
     .sheet-overlay.open { display: block; }
 
@@ -220,9 +260,20 @@
       transform: translateX(-50%);
       width: 100%; max-width: 430px;
       background: var(--surface);
-      border-radius: 16px 16px 0 0;
-      padding: 20px 16px calc(20px + var(--safe-b));
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 10px 16px calc(20px + var(--safe-b));
       z-index: 201;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .sheet::before {
+      content: "";
+      display: block;
+      width: 36px;
+      height: 3px;
+      background: var(--border);
+      border-radius: 2px;
+      margin: 0 auto 18px;
     }
     .sheet h3 { margin-bottom: 16px; }
 
@@ -233,32 +284,32 @@
       gap: 8px;
     }
     .stat-card {
-      background: var(--bg);
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       padding: 12px;
     }
-    .stat-card .val { font-size: 1.5rem; font-weight: 700; margin-top: 2px; }
+    .stat-card .val { font-size: 1.5rem; font-weight: 700; margin-top: 4px; line-height: 1.2; }
 
     /* ── Toggle ─────────────────────────────────────────────── */
     .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 0;
+      padding: 11px 0;
       border-bottom: 1px solid var(--border);
     }
     .toggle-row:last-child { border-bottom: none; }
-    input[type=checkbox] { width: 36px; height: 20px; accent-color: var(--blue); }
+    input[type=checkbox] { width: 38px; height: 22px; accent-color: var(--blue); flex-shrink: 0; }
 
     /* ── Compact badge (for inline multi-badge rows like outcome tracking) ── */
     .badge-compact {
       display: inline-block;
-      background: var(--bg);
+      background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 2px 6px;
-      font-size: 0.75rem;
+      padding: 2px 7px;
+      font-size: 0.73rem;
       font-weight: 600;
     }
 
@@ -298,15 +349,17 @@
     /* ── Global font-size button (always visible, all tabs) ─── */
     #global-fs-btn {
       position: fixed;
-      bottom: calc(var(--tab-h) + var(--safe-b) + 10px);
-      right: 10px;
+      bottom: calc(var(--tab-h) + var(--safe-b) + 12px);
+      right: 12px;
       z-index: 150;
-      background: var(--surface);
+      background: rgba(26,26,26,0.9);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       border: 1px solid var(--border);
       color: var(--text);
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
+      width: 40px;
+      height: 40px;
+      border-radius: 11px;
       font-size: 13px;
       font-weight: 700;
       cursor: pointer;
@@ -314,8 +367,10 @@
       align-items: center;
       justify-content: center;
       -webkit-tap-highlight-color: transparent;
-      box-shadow: 0 2px 8px rgba(0,0,0,.4);
+      box-shadow: 0 2px 12px rgba(0,0,0,.5);
+      transition: opacity .15s;
     }
+    #global-fs-btn:active { opacity: .7; }
   </style>
   <script>
     // Apply saved font size before render to avoid FOUC (targets html element via html[data-fs=...] CSS)

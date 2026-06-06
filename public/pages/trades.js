@@ -39,12 +39,12 @@ async function loadTrades(container) {
     let html = "";
 
     if (open.length) {
-      html += `<div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">持倉中</div>`;
+      html += `<div class="section-label">持倉中</div>`;
       html += open.map(renderOpenRow).join("");
     }
 
     if (closed.length) {
-      html += `<div style="font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600">已結清</div>`;
+      html += `<div class="section-label" style="margin-top:16px">已結清</div>`;
       html += closed.map(renderClosedRow).join("");
     }
 

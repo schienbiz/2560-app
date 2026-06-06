@@ -39,8 +39,8 @@ async function loadStats(container) {
     // Overall summary
     html += `
       <div class="card" style="margin-bottom:16px">
-        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:2px">總覽</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">所有交易的整體表現。點 ⓘ 了解各指標說明。</div>
+        <div class="section-label" style="margin-bottom:6px">總覽</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">所有交易的整體表現</div>
         <div class="stat-grid">
           ${statCard("總交易次數", overall.count, "")}
           ${statCard("勝率", pct(overall.winRate, false), "", winColor(overall.winRate))}
@@ -78,7 +78,7 @@ async function loadStats(container) {
 
       html += `
         <div class="card">
-          <div style="font-size:12px;color:${accent};font-weight:600;margin-bottom:2px">${groupLabel[key]}</div>
+          <div class="section-label" style="color:${accent};margin-bottom:6px">${groupLabel[key]}</div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${groupDesc[key]}</div>
           <div class="stat-grid">
             ${statCard("交易次數", g.count, "")}
