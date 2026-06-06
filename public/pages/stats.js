@@ -136,7 +136,7 @@ async function loadOutcomes(container) {
     const section = document.createElement("div");
     section.innerHTML = `
       <div class="card" style="margin-top:8px">
-        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:2px">訊號績效追蹤</div>
+        <div class="section-label" style="margin-bottom:6px">訊號績效追蹤</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:12px">
           訊號觸發後 N 個交易日的勝率與平均報酬（由每日自動計算）
         </div>
@@ -150,7 +150,7 @@ async function loadOutcomes(container) {
 
 function outcomeCell(period, winRate, avgRet, color) {
   return `
-    <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center">
+    <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center">
       <div style="font-size:10px;color:var(--muted);margin-bottom:4px">${period}</div>
       <div style="font-weight:700;font-size:13px;color:${color}">${winRate}</div>
       <div style="font-size:11px;color:var(--muted)">${avgRet}</div>
