@@ -1,9 +1,9 @@
 /**
  * Shared AI service — NVIDIA NIM → Groq → Cerebras → OpenRouter fallback chain.
  *
- * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
- * Fallback1: Groq          (meta-llama/llama-4-scout-17b-16e-instruct) — fast, free
- * Fallback2: Cerebras      (gpt-oss-120b)                       — ultra-fast
+ * Priority:  Groq          (meta-llama/llama-4-scout-17b-16e-instruct) — fast, <1s
+ * Fallback1: Cerebras      (gpt-oss-120b)                       — ultra-fast
+ * Fallback2: NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — reliable
  * Fallback3: OpenRouter    (moonshotai/kimi-k2.6:free) — 262k ctx, strong trading language
  *
  * Set any combination in .env; at least one key must be present.
@@ -91,16 +91,16 @@ interface Provider {
 function getProviders(): Provider[] {
   return [
     {
-      label: "NVIDIA", url: NVIDIA_URL, model: NVIDIA_MODEL,
-      key: () => process.env.NVIDIA_API_KEY,
-    },
-    {
       label: "Groq", url: GROQ_URL, model: GROQ_MODEL,
       key: () => process.env.GROQ_API_KEY,
     },
     {
       label: "Cerebras", url: CEREBRAS_URL, model: CEREBRAS_MODEL,
       key: () => process.env.CEREBRAS_API_KEY,
+    },
+    {
+      label: "NVIDIA", url: NVIDIA_URL, model: NVIDIA_MODEL,
+      key: () => process.env.NVIDIA_API_KEY,
     },
     {
       label: "OpenRouter", url: OPENROUTER_URL, model: OPENROUTER_MODEL,
