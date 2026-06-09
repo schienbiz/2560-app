@@ -2,7 +2,7 @@
  * Shared AI service — NVIDIA NIM → Groq → Cerebras → OpenRouter fallback chain.
  *
  * Priority:  NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — best quality
- * Fallback1: Groq          (llama-3.3-70b-versatile)            — fast, free
+ * Fallback1: Groq          (meta-llama/llama-4-scout-17b-16e-instruct) — fast, free
  * Fallback2: Cerebras      (gpt-oss-120b)                       — ultra-fast
  * Fallback3: OpenRouter    (moonshotai/kimi-k2.6:free) — 262k ctx, strong trading language
  *
@@ -21,7 +21,7 @@ const NVIDIA_URL   = "https://integrate.api.nvidia.com/v1/chat/completions"
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
 
 const GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
-const GROQ_MODEL = "llama-3.3-70b-versatile"
+const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions"
 const CEREBRAS_MODEL = "gpt-oss-120b"
