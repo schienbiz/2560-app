@@ -13,17 +13,6 @@
 
 import { db } from "../src/db.js"
 
-async function fetchBarOnOrAfter(symbol: string, afterDate: Date, searchWindowDays = 5): Promise<number | null> {
-  const to = new Date(afterDate)
-  to.setDate(to.getDate() + searchWindowDays)
-
-  const row = await db.ohlcvCache.findFirst({
-    where: { symbol, date: { gte: afterDate, lte: to } },
-    orderBy: { date: "asc" },
-  })
-  return row?.close ?? null
-}
-
 export async function runOutcome() {
   const now = new Date()
 
@@ -56,11 +45,18 @@ export async function runOutcome() {
         const target10 = new Date(signalDate); target10.setDate(target10.getDate() + 14)
         const target20 = new Date(signalDate); target20.setDate(target20.getDate() + 28)
 
-        const [price5, price10, price20] = await Promise.all([
-          fetchBarOnOrAfter(entry.symbol, target5),
-          fetchBarOnOrAfter(entry.symbol, target10),
-          fetchBarOnOrAfter(entry.symbol, target20),
-        ])
+        // One findMany spanning the full 20-day window; find each target in memory
+        const windowEnd = new Date(signalDate); windowEnd.setDate(windowEnd.getDate() + 33)
+        const priceRows = await db.ohlcvCache.findMany({
+          where: { symbol: entry.symbol, date: { gte: target5, lte: windowEnd } },
+          orderBy: { date: "asc" },
+          select: { date: true, close: true },
+        })
+        const firstOnOrAfter = (target: Date): number | null =>
+          priceRows.find(r => r.date >= target)?.close ?? null
+        const price5  = firstOnOrAfter(target5)
+        const price10 = firstOnOrAfter(target10)
+        const price20 = firstOnOrAfter(new Date(signalDate.getTime() + 28 * 86_400_000))
 
         const pct = (p: number | null): number | null =>
           p != null ? (p - base) / base * 100 : null

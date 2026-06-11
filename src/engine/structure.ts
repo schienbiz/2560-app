@@ -60,14 +60,15 @@ function findPivots(ohlcv: OHLCV[], lookback = 3): RawPivot[] {
 
   for (let i = lookback; i < ohlcv.length - lookback; i++) {
     const bar = ohlcv[i]
+    let isHigh = true
+    let isLow  = true
 
-    const isHigh = ohlcv
-      .slice(i - lookback, i + lookback + 1)
-      .every((b, j) => j === lookback || b.high <= bar.high)
-
-    const isLow = ohlcv
-      .slice(i - lookback, i + lookback + 1)
-      .every((b, j) => j === lookback || b.low >= bar.low)
+    for (let j = i - lookback; j <= i + lookback; j++) {
+      if (j === i) continue
+      if (ohlcv[j].high > bar.high) { isHigh = false }
+      if (ohlcv[j].low  < bar.low)  { isLow  = false }
+      if (!isHigh && !isLow) break
+    }
 
     if (isHigh) pivots.push({ date: bar.date, price: bar.high, idx: i, kind: "high" })
     if (isLow)  pivots.push({ date: bar.date, price: bar.low,  idx: i, kind: "low"  })

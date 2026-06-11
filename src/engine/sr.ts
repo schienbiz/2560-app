@@ -29,18 +29,18 @@ export function computeSR(
 
   for (let i = window; i < ohlcv.length - window; i++) {
     const bar = ohlcv[i]
+    let isPivotHigh = true
+    let isPivotLow  = true
 
-    // Pivot high: bar.high >= all highs in the window
-    const isPivotHigh = ohlcv
-      .slice(i - window, i + window + 1)
-      .every((b, j) => j === window || b.high <= bar.high)
+    for (let j = i - window; j <= i + window; j++) {
+      if (j === i) continue
+      if (ohlcv[j].high > bar.high) { isPivotHigh = false }
+      if (ohlcv[j].low  < bar.low)  { isPivotLow  = false }
+      if (!isPivotHigh && !isPivotLow) break
+    }
+
     if (isPivotHigh) pivotHighs.push(bar.high)
-
-    // Pivot low: bar.low <= all lows in the window
-    const isPivotLow = ohlcv
-      .slice(i - window, i + window + 1)
-      .every((b, j) => j === window || b.low >= bar.low)
-    if (isPivotLow) pivotLows.push(bar.low)
+    if (isPivotLow)  pivotLows.push(bar.low)
   }
 
   const currentClose = ohlcv[ohlcv.length - 1].close

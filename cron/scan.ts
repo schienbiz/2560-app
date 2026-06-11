@@ -6,6 +6,9 @@
  *  2. Proximity alert — if fast MA > slow MA (golden cross env) and price within threshold of
  *     fast MA, alert
  *  3. Zone exit — if price exits zone (>3% from fast MA) after a proximity_golden in last 3 days
+ *
+ * Performance: OHLCV is pre-fetched per unique symbol (not per alert), Fear & Greed is fetched
+ * once, and all alerts are processed in parallel via Promise.allSettled.
  */
 
 import { db } from "../src/db.js"
@@ -17,6 +20,7 @@ import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
 import type { SentimentResult } from "../src/services/news.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
+import type { OHLCV, AssetType } from "../src/engine/types.js"
 
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
 const APP_URL        = "https://two560-app.onrender.com"
@@ -44,25 +48,59 @@ export async function runScan() {
   })
 
   console.log(`Scanning ${alerts.length} watchlist alerts...`)
+  if (alerts.length === 0) { console.log("Scan complete."); return }
 
+  // ── Pre-fetch 1: OHLCV for each unique symbol (max slow_period across all alerts) ──
+  // Avoids fetching the same symbol N times when multiple users watch it.
+  type SymbolMeta = { maxDays: number; assetType: AssetType }
+  const symbolMeta = new Map<string, SymbolMeta>()
   for (const alert of alerts) {
+    const { normalizedSymbol } = getAdapter(alert.watchlist.symbol)
+    const assetType = alert.watchlist.asset_type
+    const days = fetchDaysFor(alert.slow_period, assetType)
+    const existing = symbolMeta.get(normalizedSymbol)
+    if (!existing) {
+      symbolMeta.set(normalizedSymbol, { maxDays: days, assetType })
+    } else if (days > existing.maxDays) {
+      existing.maxDays = days
+    }
+  }
+
+  const ohlcvMap = new Map<string, OHLCV[]>()
+  await Promise.allSettled([...symbolMeta.entries()].map(async ([sym, meta]) => {
+    const { adapter } = getAdapter(sym)
+    const ohlcv = await getOrFetchOHLCV(sym, meta.assetType, meta.maxDays, adapter)
+    if (ohlcv.length > 0) ohlcvMap.set(sym, ohlcv)
+  }))
+
+  // ── Pre-fetch 2: Fear & Greed once for all crypto alerts (has 1h in-memory cache) ──
+  const fearGreed = await fetchFearGreed().catch(() => null)
+
+  // ── Pre-fetch 3: Taipei date for dedup checks ──
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" })
+
+  // ── Process all alerts in parallel ───────────────────────────────────────────────
+  await Promise.allSettled(alerts.map(async alert => {
     const { watchlist } = alert
     const fastPeriod = alert.fast_period
     const slowPeriod = alert.slow_period
-    const maLabel    = `MA${fastPeriod}/MA${slowPeriod}`
 
     try {
-      const { adapter, normalizedSymbol } = getAdapter(watchlist.symbol)
+      const { normalizedSymbol } = getAdapter(watchlist.symbol)
       const assetType = watchlist.asset_type
-      const days = fetchDaysFor(slowPeriod, assetType)
+      const ohlcv = ohlcvMap.get(normalizedSymbol)
 
-      const ohlcv = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
+      if (!ohlcv || ohlcv.length === 0) {
+        console.warn(`  ⚠ ${normalizedSymbol} no OHLCV data`)
+        return
+      }
+
       const closes = ohlcv.map(b => b.close)
 
       // Bar guard: skip if insufficient history for the configured slow period
       if (closes.length < slowPeriod + 5) {
         console.warn(`  ⚠ ${normalizedSymbol} insufficient_data: ${closes.length} bars < ${slowPeriod + 5} needed`)
-        continue
+        return
       }
 
       const maFast = computeMA(closes, fastPeriod)
@@ -90,7 +128,7 @@ export async function runScan() {
         macdHist,
       }
 
-      // ── 1. Cross event ────────────────────────────────────────────────────────
+      // ── 1. Cross event ──────────────────────────────────────────────────────────
       if (signal !== "none") {
         if (signal === "golden_cross" && alert.on_golden || signal === "death_cross" && alert.on_death) {
           const alreadySent = await db.signalHistory.findFirst({
@@ -106,15 +144,10 @@ export async function runScan() {
             const entryHigh  = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
             const stopLine   = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
-            // Fear & Greed sentiment for crypto assets (free, no API key)
+            // Use pre-fetched Fear & Greed (already cached)
             let sentiment: SentimentResult | undefined
-            if (assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
-              try {
-                const fg = await fetchFearGreed()
-                if (fg) sentiment = scoreFearGreed(fg, signal)
-              } catch {
-                // sentiment is optional — proceed without it
-              }
+            if (fearGreed && assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
+              sentiment = scoreFearGreed(fearGreed, signal)
             }
 
             const insight = await notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment)
@@ -160,7 +193,7 @@ export async function runScan() {
         }
       }
 
-      // ── 2. Proximity alert (runs regardless of whether a cross fired today) ───
+      // ── 2. Proximity alert (runs regardless of whether a cross fired today) ─────
       // Only in golden cross environment (fast MA above slow MA)
       try {
         if (maFastLast && maSlowLast && maFastLast > maSlowLast && alert.on_golden) {
@@ -168,8 +201,7 @@ export async function runScan() {
           const priceDist = Math.abs(latest.close - maFastLast) / maFastLast
 
           if (priceDist <= proximityThreshold) {
-            const today = new Date()
-            today.setHours(0, 0, 0, 0)
+            const today = new Date(todayStr)
 
             const alreadyAlerted = await db.signalHistory.findFirst({
               where: {
@@ -218,12 +250,11 @@ export async function runScan() {
             }
           }
 
-          // ── 3. Zone exit alert ──────────────────────────────────────────────
+          // ── 3. Zone exit alert ────────────────────────────────────────────────
           // Price has moved >3% away from fast MA after being in the zone
           if (priceDist > EXIT_THRESHOLD) {
-            const threeDaysAgo = new Date()
+            const threeDaysAgo = new Date(todayStr)
             threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
-            threeDaysAgo.setHours(0, 0, 0, 0)
 
             const recentProximity = await db.signalHistory.findFirst({
               where: {
@@ -234,8 +265,7 @@ export async function runScan() {
             })
 
             if (recentProximity) {
-              const today = new Date()
-              today.setHours(0, 0, 0, 0)
+              const today = new Date(todayStr)
 
               const alreadyExited = await db.signalHistory.findFirst({
                 where: {
@@ -277,7 +307,7 @@ export async function runScan() {
     } catch (err) {
       console.error(`  ✗ ${watchlist.symbol}:`, err)
     }
-  }
+  }))
 
   console.log("Scan complete.")
 }

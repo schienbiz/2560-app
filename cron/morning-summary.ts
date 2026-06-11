@@ -11,7 +11,7 @@ import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal } from "../src/engine/index.js"
 import { getCachedOHLCV } from "../src/cache.js"
-import { analyzeChart } from "../src/services/ai.js"
+import { analyzeChart, type SignalHistoryEntry } from "../src/services/ai.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 
@@ -43,6 +43,27 @@ export async function runMorningSummary() {
     const key = `${alert.watchlist.user_id}::${alert.watchlist.platform}`
     if (!byUser.has(key)) byUser.set(key, [])
     byUser.get(key)!.push(alert)
+  }
+
+  // Batch-fetch historical signal outcomes for all symbols — one query shared across all users
+  const allSymbols = [...new Set(alerts.map(a => getAdapter(a.watchlist.symbol).normalizedSymbol))]
+  const allHistory = allSymbols.length > 0 ? await db.signalHistory.findMany({
+    where: {
+      symbol:              { in: allSymbols },
+      signal:              { in: ["golden_cross", "death_cross"] },
+      outcome_computed_at: { not: null },
+    },
+    orderBy: { signal_date: "desc" },
+    take: allSymbols.length * 10,
+    select: { symbol: true, signal: true, signal_date: true, confidence: true, outcome_5d: true, outcome_10d: true, outcome_20d: true },
+  }) satisfies SignalHistoryEntry[] : []
+
+  // Index by symbol for O(1) lookup per alert
+  const historyBySymbol = new Map<string, SignalHistoryEntry[]>()
+  for (const row of allHistory) {
+    if (!historyBySymbol.has(row.symbol)) historyBySymbol.set(row.symbol, [])
+    const arr = historyBySymbol.get(row.symbol)!
+    if (arr.length < 10) arr.push(row)
   }
 
   let totalUsers = 0
@@ -83,7 +104,8 @@ export async function runMorningSummary() {
         resistance:  [],
       }
 
-      const analysis = await analyzeChart(chartData, "早安。用一到兩句話告訴我這個標的今天的操作方向，以及是否接近好的進出場時機。")
+      const history = historyBySymbol.get(normalizedSymbol)
+      const analysis = await analyzeChart(chartData, "早安。用一到兩句話告訴我這個標的今天的操作方向，以及是否接近好的進出場時機。", history)
       return `• ${watchlist.label ?? normalizedSymbol}\n  ${analysis}`
     }))
 
