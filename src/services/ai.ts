@@ -57,11 +57,12 @@ function circuitTrip(label: string, ms = 60_000) {
 // ─── Single provider call (OpenAI-compatible) ─────────────────────────────────
 
 async function callProvider(
-  label:   string,
-  url:     string,
-  key:     string,
-  model:   string,
-  userMsg: string,
+  label:        string,
+  url:          string,
+  key:          string,
+  model:        string,
+  userMsg:      string,
+  maxTokens:    number = 500,
   extraHeaders?: Record<string, string>
 ): Promise<string> {
   if (circuitIsOpen(label)) throw new Error(`[${label}] circuit open`)
@@ -79,7 +80,7 @@ async function callProvider(
     },
     body: JSON.stringify({
       model,
-      max_tokens: 500,
+      max_tokens: maxTokens,
       messages: [
         { role: "system", content: SYSTEM },
         { role: "user",   content: userMsg },
@@ -153,7 +154,7 @@ export async function chat(userMsg: string): Promise<string> {
 
   for (const p of providers) {
     try {
-      return await callProvider(p.label, p.url, p.key()!, p.model, userMsg, p.extraHeaders)
+      return await callProvider(p.label, p.url, p.key()!, p.model, userMsg, 500, p.extraHeaders)
     } catch (err) {
       console.warn(`[ai] ${p.label} failed:`, (err as Error).message)
     }
@@ -168,18 +169,22 @@ export async function chat(userMsg: string): Promise<string> {
 
 const GATHER_MS = 13_000
 
-export async function multiChat(userMsg: string): Promise<string> {
+export async function multiChat(userMsg: string, maxTokens = 1000): Promise<string> {
   const providers = getProviders()
   if (providers.length === 0) throw new Error("未設定 AI API 金鑰")
   if (providers.length === 1) {
-    return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, providers[0].extraHeaders)
+    return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, maxTokens, providers[0].extraHeaders)
   }
 
-  // Each provider pushes to successes the moment it responds — the gather window
+  // Gather phase: each provider gets a capped token budget to respond quickly.
+  // Synthesis then uses the full maxTokens budget to produce the final answer.
+  const DRAFT_TOKENS = Math.min(maxTokens, 600)
+
+  // Each provider pushes to ok the moment it responds — the gather window
   // captures whatever finishes within 13s without waiting for all to complete.
   const ok: { label: string; text: string }[] = []
   const tasks = providers.map(p =>
-    callProvider(p.label, p.url, p.key()!, p.model, userMsg, p.extraHeaders)
+    callProvider(p.label, p.url, p.key()!, p.model, userMsg, DRAFT_TOKENS, p.extraHeaders)
       .then(text => { ok.push({ label: p.label, text }) })
       .catch(err  => { console.warn(`[ai] ${p.label} failed:`, (err as Error).message) })
   )
@@ -211,10 +216,10 @@ ${perspectives}
 4. 保持繁體中文、直接具體的風格，格式與原問題要求一致`
 
   try {
-    // Synthesize with the first successful provider
+    // Synthesize with the first successful provider — use full token budget
     const synth = providers.find(p => ok.find(r => r.label === p.label))!
     const final = await callProvider(
-      `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, synth.extraHeaders
+      `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, maxTokens, synth.extraHeaders
     )
     console.log(`[ai] synthesis via ${synth.label}`)
     return final
@@ -245,22 +250,80 @@ function phaseLabel(phase: string): string {
   }
 }
 
+// Returns direction arrow + 5-bar % change for an MA series
+function maSlope(series: (number | null)[], nBars = 5): string {
+  const vals = [...series].reverse().filter((v): v is number => v !== null).slice(0, nBars)
+  if (vals.length < 2) return ""
+  const pct = (vals[0] - vals[vals.length - 1]) / vals[vals.length - 1] * 100
+  const dir  = pct > 0.05 ? "↑" : pct < -0.05 ? "↓" : "→"
+  return `${dir}${Math.abs(pct).toFixed(1)}%（${nBars}日）`
+}
+
+// ─── Historical signal outcomes (fed from SignalHistory table) ─────────────────
+
+export interface SignalHistoryEntry {
+  signal:      string
+  signal_date: Date | string
+  confidence:  string
+  outcome_5d:  number | null
+  outcome_10d: number | null
+  outcome_20d: number | null
+}
+
+function buildHistorySection(history?: SignalHistoryEntry[]): string {
+  if (!history?.length) return ""
+
+  const dateStr = (d: Date | string) =>
+    typeof d === "string" ? d.slice(0, 10) : (d as Date).toISOString().slice(0, 10)
+
+  const summarize = (entries: SignalHistoryEntry[], label: string, bullish: boolean): string => {
+    const withOutcome = entries.filter(e => e.outcome_10d != null)
+    if (!withOutcome.length) return ""
+    const wins  = withOutcome.filter(e => bullish ? (e.outcome_10d! > 0) : (e.outcome_10d! < 0)).length
+    const avg10 = withOutcome.reduce((s, e) => s + e.outcome_10d!, 0) / withOutcome.length
+    const recent = entries.slice(0, 3)
+      .map(e => `${dateStr(e.signal_date)}→${e.outcome_10d != null ? (e.outcome_10d >= 0 ? "+" : "") + e.outcome_10d.toFixed(1) + "%" : "計算中"}`)
+      .join("、")
+    const winPct = Math.round(wins / withOutcome.length * 100)
+    return `${label}：${withOutcome.length}次，10日勝率 ${wins}/${withOutcome.length}（${winPct}%），均${avg10 >= 0 ? "+" : ""}${avg10.toFixed(1)}%。近期：${recent}`
+  }
+
+  const golden = history.filter(h => h.signal === "golden_cross")
+  const death  = history.filter(h => h.signal === "death_cross")
+  const lines  = [
+    summarize(golden, "黃金交叉", true),
+    summarize(death,  "死亡交叉", false),
+  ].filter(Boolean)
+
+  return lines.length ? `\n【本標的歷史訊號表現（10日後）】\n${lines.join("\n")}` : ""
+}
+
 // ─── Chart analysis ───────────────────────────────────────────────────────────
 
-export async function analyzeChart(data: ChartData, question?: string): Promise<string> {
+export async function analyzeChart(
+  data:      ChartData,
+  question?: string,
+  history?:  SignalHistoryEntry[]
+): Promise<string> {
   const lastBar = data.ohlcv.at(-1)
   if (!lastBar) return "資料不足，無法分析。"
 
   const close = lastBar.close
-  const ma25  = [...data.ma25].reverse().find(v => v != null) ?? null
-  const ma60  = [...data.ma60].reverse().find(v => v != null) ?? null
+  const ma25v = [...data.ma25].reverse().find(v => v != null) ?? null
+  const ma60v = [...data.ma60].reverse().find(v => v != null) ?? null
 
   // Compute price action structure (swing points, trend phase, ATR)
   const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
 
-  // Recent 15 candles as a compact table so the model can reason about price action
-  const candleTable = data.ohlcv.slice(-15)
-    .map(b => `  ${b.date}: H=${fmt(b.high)} L=${fmt(b.low)} C=${fmt(b.close)}`)
+  // 10-day average volume for relative volume column in candle table
+  const avgVol10 = data.ohlcv.slice(-10).reduce((s, b) => s + b.volume, 0) / Math.min(10, data.ohlcv.length)
+
+  // Recent 20 candles: O/H/L/C + volume relative to 10d average
+  const candleTable = data.ohlcv.slice(-20)
+    .map(b => {
+      const relVol = avgVol10 > 0 ? ` V×${(b.volume / avgVol10).toFixed(1)}` : ""
+      return `  ${b.date}: O=${fmt(b.open)} H=${fmt(b.high)} L=${fmt(b.low)} C=${fmt(b.close)}${relVol}`
+    })
     .join("\n")
 
   // Swing structure string
@@ -269,19 +332,27 @@ export async function analyzeChart(data: ChartData, question?: string): Promise<
     : "（樞紐點資料不足）"
 
   // Entry zone: MA25 ± 1%
-  const entryZone = ma25 != null
-    ? `${fmt(ma25 * 0.99)}–${fmt(ma25 * 1.01)}`
+  const entryZone = ma25v != null
+    ? `${fmt(ma25v * 0.99)}–${fmt(ma25v * 1.01)}`
     : "N/A"
 
   // ATR as % of price
   const atrPct = close > 0 ? (struct.atr14 / close * 100).toFixed(1) : "N/A"
 
-  // Signal label with confidence
+  // Signal age in days
+  const signalDaysAgo = data.signal_date
+    ? Math.round((Date.now() - new Date(data.signal_date).getTime()) / 86_400_000)
+    : null
+  const signalAge = signalDaysAgo != null
+    ? `${data.signal_date}，${signalDaysAgo}天前`
+    : "近期"
+
+  // Confidence label
+  const confLabel = data.confidence === "high" ? "高（成交量放大）" : data.confidence === "medium" ? "中" : "低"
+
   const signalLabel =
-    data.signal === "golden_cross"
-      ? `黃金交叉（${data.signal_date ?? "近期"}，信心度：${data.confidence === "high" ? "高" : data.confidence === "medium" ? "中" : "低"}）`
-    : data.signal === "death_cross"
-      ? `死亡交叉（${data.signal_date ?? "近期"}，信心度：${data.confidence === "high" ? "高" : data.confidence === "medium" ? "中" : "低"}）`
+    data.signal === "golden_cross" ? `黃金交叉（${signalAge}，信心度：${confLabel}）`
+    : data.signal === "death_cross" ? `死亡交叉（${signalAge}，信心度：${confLabel}）`
     : "無明顯交叉訊號"
 
   const rsiLabel  = data.rsi != null
@@ -291,16 +362,23 @@ export async function analyzeChart(data: ChartData, question?: string): Promise<
     ? `MACD柱狀(12/26/9)：${data.macdHist >= 0 ? "+" : ""}${data.macdHist.toFixed(4)}（${data.macdHist >= 0 ? "多頭動能" : "空頭動能"}）`
     : ""
 
+  // MA slope over last 5 bars
+  const ma25Slope = ma25v != null ? ` ${maSlope(data.ma25)}` : ""
+  const ma60Slope = ma60v != null ? ` ${maSlope(data.ma60)}` : ""
+
+  const historySection = buildHistorySection(history)
+
   const context = [
     `標的：${data.symbol}（${data.asset_type === "stock" ? "台股" : "加密貨幣"}）`,
     `最新收盤：${fmt(close)}`,
-    `MA25：${ma25 != null ? fmt(ma25) : "N/A"}（收盤距 MA25：${ma25 != null ? pctDiff(close, ma25) : "N/A"}）`,
-    `MA60：${ma60 != null ? fmt(ma60) : "N/A"}（MA25 距 MA60：${(ma25 != null && ma60 != null) ? pctDiff(ma25, ma60) : "N/A"}）`,
+    `MA25：${ma25v != null ? fmt(ma25v) : "N/A"}${ma25Slope}（收盤距 MA25：${ma25v != null ? pctDiff(close, ma25v) : "N/A"}）`,
+    `MA60：${ma60v != null ? fmt(ma60v) : "N/A"}${ma60Slope}（MA25 距 MA60：${(ma25v != null && ma60v != null) ? pctDiff(ma25v, ma60v) : "N/A"}）`,
     rsiLabel,
     macdLabel,
     `2560訊號：${signalLabel}`,
+    historySection,
     ``,
-    `近15日K線（日期 H/L/C）：`,
+    `近20日K線（O/H/L/C，成交量相對10日均量）：`,
     candleTable,
     ``,
     `日線擺動結構：${swingStr}`,
@@ -311,27 +389,27 @@ export async function analyzeChart(data: ChartData, question?: string): Promise<
     data.support.length    ? `支撐區：${data.support.map(v => fmt(v)).join("、")}` : "",
     data.resistance.length ? `壓力區：${data.resistance.map(v => fmt(v)).join("、")}` : "",
     `進場區（MA25 ±1%）：${entryZone}`,
-    `偏向失效線（MA60）：${ma60 != null ? fmt(ma60) : "N/A"}`,
+    `偏向失效線（MA60）：${ma60v != null ? fmt(ma60v) : "N/A"}`,
   ].filter(Boolean).join("\n")
 
   const task = question
-    ? `用戶問題：${question}\n\n基於以上資料回答問題，並補充以下五點分析：`
-    : "基於以上資料，請給出以下五點結構化分析："
+    ? `用戶問題：${question}\n\n基於以上資料回答問題，並補充以下六點分析：`
+    : "基於以上資料，請給出以下六點結構化分析："
 
   const prompt = `${context}
 
 ${task}
 
-1) 趨勢階段：impulse（推進）、correction（回調）還是 range（盤整）？說明 MA25/MA60 排列。
+1) 趨勢階段：impulse（推進）、correction（回調）還是 range（盤整）？說明 MA25/MA60 排列與斜率方向。
 2) 價格結構：從擺動點描述 HH/HL 或 LH/LL 結構，判斷多空誰在控盤。
-3) 動能確認：RSI 與 MACD 柱狀是否與訊號方向一致？說明超買/超賣風險。
-4) 進場區與操作：依 2560戰法，進場區（MA25 ±1%）、入場條件、多方/空方/觀望。
-5) 偏向與理由：看多/看空/觀望，一句話核心理由（訊號 + RSI/MACD + MA排列）。
-6) 失效條件：具體說明哪個收盤價位會使此偏向失效。
+3) 量價關係：從近期 K 線的成交量倍數（V×），判斷量是否配合方向（放量突破/縮量回調）。
+4) 動能確認：RSI 與 MACD 柱狀是否與訊號方向一致？說明超買/超賣風險。
+5) 進場區與操作：依 2560戰法，進場區（MA25 ±1%）、入場條件、多方/空方/觀望；若有歷史勝率資料請納入信心評估。
+6) 偏向與失效條件：看多/看空/觀望，一句話核心理由，並具體說明哪個收盤價位會使此偏向失效。
 
-每點 1–2 句，嚴格依照五點編號，簡潔有力。`
+每點 1–2 句，嚴格依照六點編號，簡潔有力。`
 
-  return multiChat(prompt)
+  return multiChat(prompt, 1200)
 }
 
 // ─── Notification insight (1 sentence, optimised for LINE/Telegram push) ─────
@@ -378,7 +456,7 @@ export async function notifyInsight(
 訊號：${signalCtx}
 趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}${indicators ? "\n" + indicators : ""}
 
-用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過30字）。`
+用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過50字）。`
 
   try {
     const raw = await chat(prompt)

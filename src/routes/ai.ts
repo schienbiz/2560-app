@@ -8,7 +8,7 @@
 
 import { Hono } from "hono"
 import { authMiddleware } from "../auth.js"
-import { analyzeChart } from "../services/ai.js"
+import { analyzeChart, type SignalHistoryEntry } from "../services/ai.js"
 import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal } from "../engine/signal.js"
@@ -66,7 +66,26 @@ aiRouter.post("/analyze/:symbol", async c => {
       macdHist:    result.macdHist,
     }
 
-    const analysis = await analyzeChart(data, body.question)
+    // Fetch historical signal outcomes for this symbol — gives AI real win rate context
+    const historyRows = await db.signalHistory.findMany({
+      where: {
+        symbol: normalizedSymbol,
+        signal: { in: ["golden_cross", "death_cross"] },
+        outcome_computed_at: { not: null },
+      },
+      orderBy: { signal_date: "desc" },
+      take: 10,
+      select: {
+        signal:      true,
+        signal_date: true,
+        confidence:  true,
+        outcome_5d:  true,
+        outcome_10d: true,
+        outcome_20d: true,
+      },
+    }) satisfies SignalHistoryEntry[]
+
+    const analysis = await analyzeChart(data, body.question, historyRows)
     return c.json({ analysis })
   } catch (err) {
     console.error("[ai/analyze]", err)

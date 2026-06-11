@@ -23,8 +23,21 @@ export async function getUserContext(
     }),
   ])
 
+  // Batch-query the latest signal for each watchlist symbol in one query
+  const symbols = watchlistItems.map((w: { symbol: string }) => w.symbol)
+  const latestSignals = symbols.length > 0 ? await db.signalHistory.findMany({
+    where:    { symbol: { in: symbols }, signal: { in: ["golden_cross", "death_cross"] } },
+    orderBy:  { signal_date: "desc" },
+    distinct: ["symbol"],
+    select:   { symbol: true, signal: true, signal_date: true },
+  }) : []
+  const signalMap = new Map(latestSignals.map(s => [s.symbol, s.signal as string]))
+
   return {
-    watchlist:    watchlistItems.map((w: { symbol: string }) => ({ symbol: w.symbol })),
+    watchlist: watchlistItems.map((w: { symbol: string }) => ({
+      symbol: w.symbol,
+      signal: signalMap.get(w.symbol),
+    })),
     recentTrades: recentTrades.map((t: { symbol: string; direction: string; entry_price: number; exit_price: number | null }) => ({
       symbol:      t.symbol,
       direction:   t.direction,
