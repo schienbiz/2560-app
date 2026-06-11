@@ -20,9 +20,9 @@ export const aiRouter = new Hono()
 aiRouter.use("*", authMiddleware)
 
 aiRouter.post("/analyze/:symbol", async c => {
-  if (!process.env.NVIDIA_API_KEY && !process.env.GROQ_API_KEY) {
-    return c.json({ error: "AI 功能尚未啟用" }, 503)
-  }
+  const hasKey = process.env.NVIDIA_API_KEY || process.env.GROQ_API_KEY ||
+                 process.env.CEREBRAS_API_KEY || process.env.OPENROUTER_API_KEY
+  if (!hasKey) return c.json({ error: "AI 功能尚未啟用" }, 503)
 
   const symbol = c.req.param("symbol").toUpperCase()
   const body   = await c.req.json<{ question?: string }>().catch(() => ({ question: undefined }))
@@ -61,6 +61,8 @@ aiRouter.post("/analyze/:symbol", async c => {
       signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
       support:     sr.support,
       resistance:  sr.resistance,
+      rsi:         result.rsi,
+      macdHist:    result.macdHist,
     }
 
     const analysis = await analyzeChart(data, body.question)
