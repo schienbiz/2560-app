@@ -20,8 +20,9 @@ watchlistRouter.get("/", async c => {
   // Attach most recent SignalHistory entry for each symbol (for badge display)
   const symbols = [...new Set(items.map(i => i.symbol))]
   const signals = await db.signalHistory.findMany({
-    where: { symbol: { in: symbols } },
+    where:   { symbol: { in: symbols } },
     orderBy: { signal_date: "desc" },
+    take:    symbols.length * 3,  // at most 3 recent signals per symbol for badge display
   })
   // One latest signal per symbol
   const latestBySymbol = new Map<string, typeof signals[0]>()

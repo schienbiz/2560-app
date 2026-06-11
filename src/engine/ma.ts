@@ -11,13 +11,21 @@
 /**
  * Simple Moving Average over a closing price series.
  * Returns null for indices where fewer than `period` prices exist.
+ * Sliding window O(N) — avoids the O(N×period) cost of repeated slice+reduce.
  */
 export function computeMA(prices: number[], period: number): (number | null)[] {
-  return prices.map((_, i) => {
-    if (i < period - 1) return null
-    const slice = prices.slice(i - period + 1, i + 1)
-    return slice.reduce((sum, p) => sum + p, 0) / period
-  })
+  const result: (number | null)[] = new Array(prices.length).fill(null)
+  if (prices.length < period) return result
+
+  let sum = 0
+  for (let i = 0; i < period; i++) sum += prices[i]
+  result[period - 1] = sum / period
+
+  for (let i = period; i < prices.length; i++) {
+    sum += prices[i] - prices[i - period]
+    result[i] = sum / period
+  }
+  return result
 }
 
 /**

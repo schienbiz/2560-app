@@ -12,7 +12,8 @@
 import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
-import { computeMA, analyzeSymbol } from "../engine/index.js"
+import { computeMA } from "../engine/index.js"
+import { scoreSignal } from "../engine/signal.js"
 import { computeSR } from "../engine/sr.js"
 import { computeStructure } from "../engine/structure.js"
 import type { ChartData } from "../engine/types.js"
@@ -41,7 +42,9 @@ chartRouter.get("/chart/:symbol", async c => {
     const closes = ohlcv.map(b => b.close)
     const ma25   = computeMA(closes, fastPeriod)
     const ma60   = computeMA(closes, slowPeriod)
-    const result = analyzeSymbol(ohlcv)
+    // Use scoreSignal with the already-computed MAs (respects custom periods;
+    // avoids the redundant MA recomputation inside analyzeSymbol)
+    const result = scoreSignal(ohlcv, ma25, ma60)
 
     const sr      = computeSR(ohlcv)
     const struct  = computeStructure(ohlcv, ma25, ma60)
@@ -82,7 +85,10 @@ chartRouter.get("/signal/:symbol", async c => {
       await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
     }
 
-    const result = analyzeSymbol(ohlcv)
+    const closes = ohlcv.map(b => b.close)
+    const ma25   = computeMA(closes, 25)
+    const ma60   = computeMA(closes, 60)
+    const result = scoreSignal(ohlcv, ma25, ma60)
     return c.json({
       symbol:      normalizedSymbol,
       signal:      result.signal,

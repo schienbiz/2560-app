@@ -14,6 +14,7 @@
  */
 
 import type { WebSocket } from "ws"
+import type { Prisma } from "@prisma/client"
 import { resolveAuth, type AuthUser } from "../auth.js"
 import { db } from "../db.js"
 import { getAdapter } from "../adapters/index.js"
@@ -21,24 +22,42 @@ import { computeMA } from "../engine/index.js"
 import { scoreSignal } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 
-const INTERVAL_MS = 10_000
+const INTERVAL_MS     = 10_000
+const WATCHLIST_TTL   = 60_000  // re-query DB at most once per minute per connection
 
-type WsState = { user?: AuthUser; timer?: ReturnType<typeof setInterval> }
+type WatchlistWithAlert = Prisma.WatchlistGetPayload<{ include: { alert: true } }>
+type WsState = {
+  user?:           AuthUser
+  timer?:          ReturnType<typeof setInterval>
+  watchlistCache?: { items: WatchlistWithAlert[]; ts: number }
+}
 const state = new WeakMap<WebSocket, WsState>()
+
+async function getWatchlist(s: WsState, user: AuthUser): Promise<WatchlistWithAlert[]> {
+  if (s.watchlistCache && Date.now() - s.watchlistCache.ts < WATCHLIST_TTL) {
+    return s.watchlistCache.items
+  }
+  const items = await db.watchlist.findMany({
+    where:   { user_id: user.userId, platform: user.platform },
+    include: { alert: true },
+    orderBy: { created_at: "asc" },
+  })
+  s.watchlistCache = { items, ts: Date.now() }
+  return items
+}
 
 async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
   if (ws.readyState !== 1 /* OPEN */) return
 
-  const watchlist = await db.watchlist.findMany({
-    where: { user_id: user.userId, platform: user.platform },
-    include: { alert: true },
-    orderBy: { created_at: "asc" },
-  })
+  const s        = state.get(ws)
+  if (!s) return
+  const watchlist = await getWatchlist(s, user)
 
-  for (const item of watchlist) {
+  // Fetch all symbols concurrently — don't serialize N API calls
+  await Promise.allSettled(watchlist.map(async item => {
     try {
       const { adapter, normalizedSymbol } = getAdapter(item.symbol)
-      const assetType = adapter.getAssetType()
+      const assetType  = adapter.getAssetType()
       const fastPeriod = item.alert?.fast_period ?? 25
       const slowPeriod = item.alert?.slow_period ?? 60
       const days = fetchDaysFor(slowPeriod, assetType)
@@ -57,6 +76,7 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
         if (q !== null) liveClose = q
       }
 
+      if (ws.readyState !== 1) return
       ws.send(JSON.stringify({
         type:        "price",
         symbol:      normalizedSymbol,
@@ -71,7 +91,7 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
     } catch {
       // Skip failed symbols — don't kill the whole push cycle.
     }
-  }
+  }))
 }
 
 export function handleWsConnection(ws: WebSocket): void {

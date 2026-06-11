@@ -22,7 +22,7 @@ export async function runRemind() {
 
   console.log(`Sending ${due.length} reminders...`)
 
-  for (const r of due) {
+  await Promise.allSettled(due.map(async r => {
     try {
       const msg = `🔔 提醒：${r.symbol}${r.note ? `\n${r.note}` : ""}`
       if (r.platform === "line") {
@@ -35,7 +35,7 @@ export async function runRemind() {
     } catch (err) {
       console.error(`  ✗ reminder ${r.id}:`, err)
     }
-  }
+  }))
 
   console.log("Reminders sent.")
 }

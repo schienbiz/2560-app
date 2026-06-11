@@ -44,39 +44,43 @@ export async function runOutcome() {
 
   console.log(`Computing outcomes for ${pending.length} signal entries...`)
 
-  for (const entry of pending) {
-    try {
-      const base       = entry.close_price
-      const signalDate = new Date(entry.signal_date)
+  // Process in parallel batches of 10 to avoid DB connection pool pressure
+  const BATCH = 10
+  for (let i = 0; i < pending.length; i += BATCH) {
+    await Promise.allSettled(pending.slice(i, i + BATCH).map(async entry => {
+      try {
+        const base       = entry.close_price
+        const signalDate = new Date(entry.signal_date)
 
-      const target5  = new Date(signalDate); target5.setDate(target5.getDate() + 7)
-      const target10 = new Date(signalDate); target10.setDate(target10.getDate() + 14)
-      const target20 = new Date(signalDate); target20.setDate(target20.getDate() + 28)
+        const target5  = new Date(signalDate); target5.setDate(target5.getDate() + 7)
+        const target10 = new Date(signalDate); target10.setDate(target10.getDate() + 14)
+        const target20 = new Date(signalDate); target20.setDate(target20.getDate() + 28)
 
-      const [price5, price10, price20] = await Promise.all([
-        fetchBarOnOrAfter(entry.symbol, target5),
-        fetchBarOnOrAfter(entry.symbol, target10),
-        fetchBarOnOrAfter(entry.symbol, target20),
-      ])
+        const [price5, price10, price20] = await Promise.all([
+          fetchBarOnOrAfter(entry.symbol, target5),
+          fetchBarOnOrAfter(entry.symbol, target10),
+          fetchBarOnOrAfter(entry.symbol, target20),
+        ])
 
-      const pct = (p: number | null): number | null =>
-        p != null ? (p - base) / base * 100 : null
+        const pct = (p: number | null): number | null =>
+          p != null ? (p - base) / base * 100 : null
 
-      await db.signalHistory.update({
-        where: { id: entry.id },
-        data: {
-          outcome_5d:          pct(price5),
-          outcome_10d:         pct(price10),
-          outcome_20d:         pct(price20),
-          outcome_computed_at: new Date(),
-        },
-      })
+        await db.signalHistory.update({
+          where: { id: entry.id },
+          data: {
+            outcome_5d:          pct(price5),
+            outcome_10d:         pct(price10),
+            outcome_20d:         pct(price20),
+            outcome_computed_at: new Date(),
+          },
+        })
 
-      const fmt = (v: number | null) => v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : "N/A"
-      console.log(`  ✓ ${entry.symbol} ${String(entry.signal_date).slice(0, 10)} ${entry.signal}: 5d=${fmt(pct(price5))} 10d=${fmt(pct(price10))} 20d=${fmt(pct(price20))}`)
-    } catch (err) {
-      console.error(`  ✗ ${entry.symbol} ${entry.id}:`, err)
-    }
+        const fmt = (v: number | null) => v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : "N/A"
+        console.log(`  ✓ ${entry.symbol} ${String(entry.signal_date).slice(0, 10)} ${entry.signal}: 5d=${fmt(pct(price5))} 10d=${fmt(pct(price10))} 20d=${fmt(pct(price20))}`)
+      } catch (err) {
+        console.error(`  ✗ ${entry.symbol} ${entry.id}:`, err)
+      }
+    }))
   }
 
   console.log("Outcome computation complete.")

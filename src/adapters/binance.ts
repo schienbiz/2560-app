@@ -73,7 +73,7 @@ export class BinanceAdapter implements MarketAdapter {
     const since = Math.floor(Date.now() / 1000) - days * 86400
     const url = `${BASE}/OHLC?pair=${pair}&interval=1440&since=${since}`
 
-    const res = await fetch(url)
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) })
     if (!res.ok) throw new Error(`Kraken fetch failed: ${res.status} ${symbol}`)
 
     const json = await res.json() as KrakenResponse

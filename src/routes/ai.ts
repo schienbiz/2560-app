@@ -10,7 +10,8 @@ import { Hono } from "hono"
 import { authMiddleware } from "../auth.js"
 import { analyzeChart } from "../services/ai.js"
 import { getAdapter } from "../adapters/index.js"
-import { computeMA, analyzeSymbol } from "../engine/index.js"
+import { computeMA } from "../engine/index.js"
+import { scoreSignal } from "../engine/signal.js"
 import { computeSR } from "../engine/sr.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 import { db } from "../db.js"
@@ -47,7 +48,7 @@ aiRouter.post("/analyze/:symbol", async c => {
     const closes = ohlcv.map(b => b.close)
     const ma25   = computeMA(closes, fastPeriod)
     const ma60   = computeMA(closes, slowPeriod)
-    const result = analyzeSymbol(ohlcv)
+    const result = scoreSignal(ohlcv, ma25, ma60)
     const sr     = computeSR(ohlcv)
 
     const data: ChartData = {

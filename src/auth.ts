@@ -29,6 +29,14 @@ declare module "hono" {
 const lineTokenCache = new Map<string, { userId: string; expiresAt: number }>()
 const LINE_TOKEN_TTL = 60 * 60 * 1000  // 1 hour
 
+// Purge expired entries every hour — prevents unbounded cache growth on long-running process
+setInterval(() => {
+  const now = Date.now()
+  for (const [token, entry] of lineTokenCache) {
+    if (now >= entry.expiresAt) lineTokenCache.delete(token)
+  }
+}, 60 * 60 * 1000)
+
 async function verifyLine(token: string): Promise<string | null> {
   // LINE_CHANNEL_ID is the numeric prefix of LIFF_ID (e.g. "2009750300-3ibNysMP" → "2009750300")
   const channelId = process.env.LINE_CHANNEL_ID ?? process.env.LIFF_ID?.split("-")[0]
