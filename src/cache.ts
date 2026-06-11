@@ -49,16 +49,24 @@ export async function getCachedOHLCV(
   }))
 }
 
+const UPSERT_BATCH = 20
+
 export async function upsertOHLCV(
   symbol: string,
   source: string,
   bars: OHLCV[]
 ): Promise<void> {
-  await Promise.all(bars.map(b =>
-    db.ohlcvCache.upsert({
-      where: { symbol_date: { symbol, date: new Date(b.date) } },
-      create: { symbol, source, date: new Date(b.date), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume },
-      update: { open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume, fetched_at: new Date() },
-    })
-  ))
+  // Batch into groups of UPSERT_BATCH to avoid saturating the DB connection pool
+  // (90 parallel upserts would open 90 connections; sequential batches are safer)
+  for (let i = 0; i < bars.length; i += UPSERT_BATCH) {
+    await db.$transaction(
+      bars.slice(i, i + UPSERT_BATCH).map(b =>
+        db.ohlcvCache.upsert({
+          where:  { symbol_date: { symbol, date: new Date(b.date) } },
+          create: { symbol, source, date: new Date(b.date), open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume },
+          update: { open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume, fetched_at: new Date() },
+        })
+      )
+    )
+  }
 }

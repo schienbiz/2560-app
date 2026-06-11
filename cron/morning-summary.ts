@@ -21,8 +21,10 @@ async function push(platform: string, userId: string, msg: string) {
 }
 
 export async function runMorningSummary() {
-  if (!process.env.GROQ_API_KEY) {
-    console.log("GROQ_API_KEY not set — skipping morning summary")
+  const hasKey = process.env.GROQ_API_KEY || process.env.CEREBRAS_API_KEY ||
+                 process.env.NVIDIA_API_KEY || process.env.OPENROUTER_API_KEY
+  if (!hasKey) {
+    console.log("No AI API key set — skipping morning summary")
     return
   }
 
@@ -48,43 +50,46 @@ export async function runMorningSummary() {
 
   for (const [, userAlerts] of byUser) {
     const { user_id, platform } = userAlerts[0].watchlist
-    const lines: string[] = []
-
-    for (const alert of userAlerts) {
+    // Process all symbols for this user concurrently
+    const results = await Promise.allSettled(userAlerts.map(async alert => {
       const { watchlist } = alert
-      try {
-        const { normalizedSymbol } = getAdapter(watchlist.symbol)
+      const fastPeriod = alert.fast_period
+      const slowPeriod = alert.slow_period
+      const { normalizedSymbol } = getAdapter(watchlist.symbol)
 
-        const ohlcv = await getCachedOHLCV(normalizedSymbol, watchlist.asset_type, 90)
-        if (!ohlcv || ohlcv.length < 65) continue  // skip if no cached data
+      // Fetch enough history for the configured slow period
+      const minBars = slowPeriod + 30
+      const cacheDays = Math.max(120, Math.ceil(minBars * (watchlist.asset_type === "crypto" ? 1 : 1.45)))
+      const ohlcv = await getCachedOHLCV(normalizedSymbol, watchlist.asset_type, cacheDays)
+      if (!ohlcv || ohlcv.length < slowPeriod + 5) return null
 
-        const closes = ohlcv.map(b => b.close)
-        const ma25   = computeMA(closes, 25)
-        const ma60   = computeMA(closes, 60)
-        const { signal, confidence } = scoreSignal(ohlcv, ma25, ma60, 3)
+      const closes = ohlcv.map(b => b.close)
+      const maFast = computeMA(closes, fastPeriod)
+      const maSlow = computeMA(closes, slowPeriod)
+      const { signal, confidence } = scoreSignal(ohlcv, maFast, maSlow, 3)
 
-        // Only include symbols with active cross signal (not "none")
-        if (signal === "none") continue
+      if (signal === "none") return null
 
-        const chartData: ChartData = {
-          symbol:      normalizedSymbol,
-          asset_type:  watchlist.asset_type,
-          ohlcv,
-          ma25,
-          ma60,
-          signal,
-          confidence,
-          signal_date: null,
-          support:     [],
-          resistance:  [],
-        }
-
-        const analysis = await analyzeChart(chartData, "早安。用一到兩句話告訴我這個標的今天的操作方向，以及是否接近好的進出場時機。")
-        lines.push(`• ${watchlist.label ?? normalizedSymbol}\n  ${analysis}`)
-      } catch (err) {
-        console.error(`  ✗ morning summary for ${watchlist.symbol}:`, err)
+      const chartData: ChartData = {
+        symbol:      normalizedSymbol,
+        asset_type:  watchlist.asset_type,
+        ohlcv,
+        ma25:        maFast,
+        ma60:        maSlow,
+        signal,
+        confidence,
+        signal_date: null,
+        support:     [],
+        resistance:  [],
       }
-    }
+
+      const analysis = await analyzeChart(chartData, "早安。用一到兩句話告訴我這個標的今天的操作方向，以及是否接近好的進出場時機。")
+      return `• ${watchlist.label ?? normalizedSymbol}\n  ${analysis}`
+    }))
+
+    const lines: string[] = results
+      .map(r => (r.status === "fulfilled" ? r.value : null))
+      .filter((v): v is string => v !== null)
 
     const msg = lines.length > 0
       ? `🌅 2560戰法 早安摘要\n\n${lines.join("\n\n")}`

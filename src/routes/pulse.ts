@@ -52,32 +52,31 @@ async function fetchPulseData(): Promise<PulseRow[]> {
 
   if (qualified.length === 0) return []
 
-  // Fetch latest signal + close price per symbol
-  const rows: PulseRow[] = await Promise.all(
-    qualified.map(async ([symbol, count]) => {
-      const sig = await db.signalHistory.findFirst({
-        where:   { symbol },
-        orderBy: { signal_date: "desc" },
-      })
+  const symbols = qualified.map(([s]) => s)
 
-      // Latest close from OhlcvCache
-      const ohlcv = await db.ohlcvCache.findFirst({
-        where:   { symbol },
-        orderBy: { date: "desc" },
-      })
+  // 2 queries total instead of 2N — fetch latest signal and price for all symbols at once
+  const [latestSignals, latestPrices] = await Promise.all([
+    db.signalHistory.findMany({
+      where:    { symbol: { in: symbols } },
+      orderBy:  { signal_date: "desc" },
+      distinct: ["symbol"],
+    }),
+    db.ohlcvCache.findMany({
+      where:    { symbol: { in: symbols } },
+      orderBy:  { date: "desc" },
+      distinct: ["symbol"],
+    }),
+  ])
 
-      const close = ohlcv?.close != null
-        ? ohlcv.close.toLocaleString("zh-TW")
-        : "─"
+  const signalMap = new Map(latestSignals.map(s => [s.symbol, s]))
+  const priceMap  = new Map(latestPrices.map(p => [p.symbol, p]))
 
-      return {
-        symbol,
-        signalLabel: signalLabel(sig?.signal),
-        count,
-        close,
-      }
-    })
-  )
+  const rows: PulseRow[] = qualified.map(([symbol, count]) => {
+    const sig   = signalMap.get(symbol)
+    const ohlcv = priceMap.get(symbol)
+    const close = ohlcv?.close != null ? ohlcv.close.toLocaleString("zh-TW") : "─"
+    return { symbol, signalLabel: signalLabel(sig?.signal), count, close }
+  })
 
   return rows
 }

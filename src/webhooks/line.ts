@@ -110,8 +110,9 @@ export async function handleLineWebhook(c: Context): Promise<Response> {
   let body: LineWebhookBody
   try { body = JSON.parse(rawBody) } catch { return c.json({ ok: true }) }
 
-  // Process events concurrently (fire-and-forget per LINE recommendation)
-  await Promise.allSettled(body.events.map(async event => {
+  // Return 200 immediately — LINE times out if we don't respond quickly.
+  // Process events async; reply token lasts 30s so we still have time to reply.
+  Promise.allSettled(body.events.map(async event => {
     if (event.type === "follow") {
       await sendWelcomeMessage(event.replyToken)
       return
@@ -134,7 +135,7 @@ export async function handleLineWebhook(c: Context): Promise<Response> {
       console.error("[line-webhook] error:", err)
       await replyMessage(event.replyToken, "分析時發生錯誤，請稍後再試。")
     }
-  }))
+  })).catch(err => console.error("[line-webhook] event processing error:", err))
 
   return c.json({ ok: true })
 }
