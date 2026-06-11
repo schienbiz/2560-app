@@ -1,10 +1,8 @@
 /**
- * Shared AI service — NVIDIA NIM → Groq → Cerebras → OpenRouter fallback chain.
+ * Shared AI service — multi-model provider chain.
  *
- * Priority:  Groq          (meta-llama/llama-4-scout-17b-16e-instruct) — fast, <1s
- * Fallback1: Cerebras      (gpt-oss-120b)                       — ultra-fast
- * Fallback2: NVIDIA NIM    (meta/llama-3.3-70b-instruct)        — reliable
- * Fallback3: OpenRouter    (moonshotai/kimi-k2.6:free) — 262k ctx, strong trading language
+ * Sequential fallback (chat):    Groq → Cerebras → NVIDIA → OpenRouter(Kimi K2)
+ * Parallel gather (multiChat):   + DeepSeek-R1 (reasoning, :free via OpenRouter)
  *
  * Set any combination in .env; at least one key must be present.
  * Each provider is tried in order; the first successful response wins.
@@ -28,6 +26,9 @@ const CEREBRAS_MODEL = "gpt-oss-120b"
 
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 const OPENROUTER_MODEL = "moonshotai/kimi-k2.6:free"
+
+// DeepSeek R1: reasoning model via OpenRouter free tier (gatherOnly — parallel analysis only)
+const DEEPSEEK_MODEL = "deepseek/deepseek-r1:free"
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
@@ -85,6 +86,7 @@ interface Provider {
   url:          string
   model:        string
   key:          () => string | undefined
+  gatherOnly?:  boolean  // if true: only used in multiChat (parallel), skipped in chat (sequential)
   extraHeaders?: Record<string, string>
 }
 
@@ -110,6 +112,15 @@ function getProviders(): Provider[] {
         "X-Title":      "2560戰法",
       },
     },
+    {
+      label: "DeepSeek-R1", url: OPENROUTER_URL, model: DEEPSEEK_MODEL,
+      key: () => process.env.OPENROUTER_API_KEY,
+      gatherOnly: true,
+      extraHeaders: {
+        "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
+        "X-Title":      "2560戰法",
+      },
+    },
   ].filter(p => !!p.key())
 }
 
@@ -117,7 +128,7 @@ function getProviders(): Provider[] {
 // Used for latency-sensitive calls (push notifications, sentiment scoring).
 
 export async function chat(userMsg: string): Promise<string> {
-  const providers = getProviders()
+  const providers = getProviders().filter(p => !p.gatherOnly)
   if (providers.length === 0) throw new Error("未設定 AI API 金鑰（NVIDIA_API_KEY / GROQ_API_KEY / OPENROUTER_API_KEY）")
 
   for (const p of providers) {
