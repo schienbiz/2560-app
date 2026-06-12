@@ -46,6 +46,7 @@ async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method:  "POST",
+    signal:  AbortSignal.timeout(10_000),
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({
       chat_id:      chatId,

@@ -65,8 +65,8 @@ export interface BacktestResult {
   by_confidence: { high: ConfidenceGroup; medium: ConfidenceGroup; low: ConfidenceGroup }
 }
 
-export function runBacktest(symbol: string, ohlcv: OHLCV[]): BacktestResult {
-  if (ohlcv.length < 65) {
+export function runBacktest(symbol: string, ohlcv: OHLCV[], fastPeriod = 25, slowPeriod = 60): BacktestResult {
+  if (ohlcv.length < slowPeriod + 5) {
     return {
       symbol, bars: ohlcv.length,
       from_date: ohlcv[0]?.date ?? "", to_date: ohlcv.at(-1)?.date ?? "",
@@ -85,15 +85,15 @@ export function runBacktest(symbol: string, ohlcv: OHLCV[]): BacktestResult {
 
   const closes  = ohlcv.map(b => b.close)
   const volumes = ohlcv.map(b => b.volume)
-  const ma25    = computeMA(closes, 25)
-  const ma60    = computeMA(closes, 60)
+  const ma25    = computeMA(closes, fastPeriod)
+  const ma60    = computeMA(closes, slowPeriod)
   const rsiSer  = computeRSI(closes)
   const macdSer = computeMACD(closes)
 
   const trades: BacktestTrade[] = []
   let open: { date: string; price: number; confidence: Confidence; factorsPassed: number } | null = null
 
-  for (let i = 61; i < ohlcv.length; i++) {
+  for (let i = slowPeriod + 1; i < ohlcv.length; i++) {
     const p25 = ma25[i - 1], c25 = ma25[i]
     const p60 = ma60[i - 1], c60 = ma60[i]
     if (p25 == null || c25 == null || p60 == null || c60 == null) continue

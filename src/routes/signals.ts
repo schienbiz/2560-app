@@ -35,6 +35,8 @@ signalsRouter.get("/outcomes", async c => {
         signal:             { in: ["golden_cross", "death_cross"] },
         outcome_computed_at: { not: null },
       },
+      orderBy: { signal_date: "desc" },
+      take:    Math.min(symbols.length * 50, 500),
       select: {
         symbol:      true,
         signal:      true,
