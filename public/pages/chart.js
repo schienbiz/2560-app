@@ -74,11 +74,15 @@ function computeMACD(prices, fast = 12, slow = 26, signal = 9) {
 let chartInstances    = [];
 let chartResizeObs    = null;
 let currentSymbol     = null;
+let currentFastPeriod = 25;
+let currentSlowPeriod = 60;
 
 // ─── Page entry point ───────────────────────────────────────────────────────
 
 export async function renderChart(container, params = {}) {
   const symbol = params.symbol || currentSymbol || "";
+  currentFastPeriod = params.fast_period ?? 25;
+  currentSlowPeriod = params.slow_period ?? 60;
 
   container.innerHTML = `
     <div class="row" style="margin-bottom:12px">
@@ -157,7 +161,7 @@ async function loadChart(rawSymbol) {
   destroyCharts();
 
   try {
-    const data = await api.get(`/api/chart/${symbol}?days=120`);
+    const data = await api.get(`/api/chart/${symbol}?days=120&fast_period=${currentFastPeriod}&slow_period=${currentSlowPeriod}`);
     loadingEl.style.display = "none";
 
     const signalObj = {
@@ -589,7 +593,7 @@ async function runBacktest(symbol, el, days) {
   el.style.display = "none";
 
   try {
-    const r = await api.get(`/api/backtest/${symbol}?days=${days}`);
+    const r = await api.get(`/api/backtest/${symbol}?days=${days}&fast_period=${currentFastPeriod}&slow_period=${currentSlowPeriod}`);
 
     const fmt       = v => v != null ? (v >= 0 ? "+" : "") + v.toFixed(1) + "%" : "—";
     const fmtP      = n => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -693,7 +697,7 @@ async function runBacktest(symbol, el, days) {
 
     // ── Period toggle ─────────────────────────────────────────────────────────
     const periodBtns = [365, 730].map(d => `
-      <button onclick="runBacktest('${symbol}', document.getElementById('chart-backtest'), ${d})"
+      <button class="bt-period-btn" data-days="${d}"
         style="padding:3px 10px;border-radius:12px;border:1px solid var(--border);font-size:11px;cursor:pointer;
                background:${d===days?"var(--yellow)":"var(--bg)"};color:${d===days?"#000":"var(--muted)"}">
         ${d===365?"1年":"2年"}
@@ -785,6 +789,9 @@ async function runBacktest(symbol, el, days) {
         </div>
       </div>`;
 
+    el.querySelectorAll(".bt-period-btn").forEach(b => {
+      b.addEventListener("click", () => runBacktest(symbol, el, parseInt(b.dataset.days)));
+    });
     el.style.display = "block";
     btn.textContent = "📊 收起回測";
   } catch (err) {

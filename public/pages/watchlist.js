@@ -161,7 +161,7 @@ async function loadList(container) {
 
     listEl.querySelectorAll(".wl-row").forEach((el) => {
       el.addEventListener("click", () => {
-        navigate("chart", { symbol: el.dataset.symbol });
+        navigate("chart", { symbol: el.dataset.symbol, fast_period: parseInt(el.dataset.fastPeriod ?? "25"), slow_period: parseInt(el.dataset.slowPeriod ?? "60") });
       });
     });
 
@@ -193,7 +193,7 @@ function renderRow(item) {
     : "";
 
   return `
-    <div class="card wl-row" data-symbol="${esc(item.symbol)}" style="cursor:pointer;padding:12px 14px">
+    <div class="card wl-row" data-symbol="${esc(item.symbol)}" data-fast-period="${item.alert?.fast_period ?? 25}" data-slow-period="${item.alert?.slow_period ?? 60}" style="cursor:pointer;padding:12px 14px">
       <div class="row" style="align-items:flex-start">
         <div style="flex:1;min-width:0;margin-right:8px">
           <div style="font-weight:700;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
@@ -244,7 +244,7 @@ async function runScan(container) {
 
     // Tap scan row → go to chart
     resultsEl.querySelectorAll(".scan-row").forEach((el) => {
-      el.addEventListener("click", () => navigate("chart", { symbol: el.dataset.symbol }));
+      el.addEventListener("click", () => navigate("chart", { symbol: el.dataset.symbol, fast_period: parseInt(el.dataset.fastPeriod ?? "25"), slow_period: parseInt(el.dataset.slowPeriod ?? "60") }));
     });
 
     // 高信心 tooltip
@@ -294,7 +294,7 @@ function renderScanRow(item) {
     : "";
 
   return `
-    <div class="scan-row" data-symbol="${item.symbol}"
+    <div class="scan-row" data-symbol="${item.symbol}" data-fast-period="${fp}" data-slow-period="${sp}"
       style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer">
       <div>
         <span style="font-weight:700">${item.symbol}</span>
