@@ -16,4 +16,4 @@ jobs:
         run: psql "${{ secrets.DATABASE_URL }}" -c "SELECT 1"
 
       - name: Ping app
-        run: curl -sf "${{ secrets.APP_URL }}/config.js" > /dev/null
+        run: curl -sf "${{ secrets.APP_URL }}/health" > /dev/null

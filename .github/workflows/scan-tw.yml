@@ -1,0 +1,22 @@
+name: Scan — Taiwan stocks
+
+on:
+  schedule:
+    - cron: "0 6 * * 1-5"   # 2:00 PM Taipei (UTC+8), Mon–Fri — after TW/HK market close (1:30 PM)
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake up Render
+        run: |
+          for i in 1 2 3 4; do
+            curl -sf --max-time 30 "${{ secrets.APP_URL }}/health" > /dev/null && echo "App warm" && break
+            echo "Still waking up ($i/4)..." && sleep 20
+          done
+
+      - name: Trigger TW stock scan
+        run: |
+          curl -f --max-time 90 -X POST "${{ secrets.APP_URL }}/internal/scan?market=tw" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

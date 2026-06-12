@@ -1,0 +1,15 @@
+name: Reminders — US stocks
+
+on:
+  schedule:
+    - cron: "30 12 * * 1-5"   # 8:30 PM Taipei (UTC+8), Mon–Fri — ~1 hour before US market opens (9:30 PM Taipei)
+  workflow_dispatch:
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send US stock reminders
+        run: |
+          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind?market=us" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

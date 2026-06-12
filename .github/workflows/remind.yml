@@ -1,15 +1,15 @@
-name: Daily reminders
+name: Reminders — TW stocks + Crypto
 
 on:
   schedule:
-    - cron: "0 1 * * *"   # 9:00am Taipei (UTC+8) every day
+    - cron: "30 0 * * *"   # 8:30 AM Taipei (UTC+8), daily — before TW market open + after crypto daily candle
   workflow_dispatch:
 
 jobs:
   remind:
     runs-on: ubuntu-latest
     steps:
-      - name: Send reminders
+      - name: Send TW + crypto reminders
         run: |
-          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind" \
+          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind?market=tw,crypto" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"

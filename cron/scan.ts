@@ -25,6 +25,17 @@ import type { OHLCV, AssetType } from "../src/engine/types.js"
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
 const APP_URL        = "https://two560-app.onrender.com"
 
+type Market = "tw" | "us" | "crypto"
+
+// Classify a symbol into tw / us / crypto based on asset_type and symbol pattern.
+// TW = Taiwan stocks (.TW, .TWO) or 4-digit shorthand (e.g. "2330")
+// HK-listed stocks (.HK) trade same timezone as TW → treated as "tw" bucket
+function getMarket(assetType: string, symbol: string): Market {
+  if (assetType === "crypto") return "crypto"
+  if (/\.(TWO?|HK)$/i.test(symbol) || /^\d{4}$/.test(symbol)) return "tw"
+  return "us"
+}
+
 // Smart MACD formatter: large values (BTC) get 0-2 decimals, small (alt) get 4-6
 function fmtMacd(v: number): string {
   const abs = Math.abs(v)
@@ -41,13 +52,18 @@ async function push(platform: string, userId: string, msg: string) {
   else await pushTelegram(userId, msg)
 }
 
-export async function runScan() {
-  const alerts = await db.watchlistAlert.findMany({
+export async function runScan(markets?: Market[]) {
+  const allAlerts = await db.watchlistAlert.findMany({
     where: { active: true },
     include: { watchlist: true },
   })
 
-  console.log(`Scanning ${alerts.length} watchlist alerts...`)
+  const alerts = markets
+    ? allAlerts.filter(a => markets.includes(getMarket(a.watchlist.asset_type, a.watchlist.symbol)))
+    : allAlerts
+
+  const marketLabel = markets ? ` [${markets.join(",")}]` : ""
+  console.log(`Scanning ${alerts.length}/${allAlerts.length} watchlist alerts${marketLabel}...`)
   if (alerts.length === 0) { console.log("Scan complete."); return }
 
   // ── Pre-fetch 1: OHLCV for each unique symbol (max slow_period across all alerts) ──

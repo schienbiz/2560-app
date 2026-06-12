@@ -41,8 +41,10 @@ app.post("/internal/scan", async c => {
   if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
     return c.json({ error: "Forbidden" }, 403)
   }
+  const marketParam = c.req.query("market")
+  const markets = marketParam ? (marketParam.split(",") as Array<"tw" | "us" | "crypto">) : undefined
   const { runScan } = await import("../cron/scan.js")
-  await runScan()
+  await runScan(markets)
   return c.json({ ok: true })
 })
 
@@ -51,8 +53,10 @@ app.post("/internal/remind", async c => {
   if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
     return c.json({ error: "Forbidden" }, 403)
   }
+  const marketParam = c.req.query("market")
+  const markets = marketParam ? (marketParam.split(",") as Array<"tw" | "us" | "crypto">) : undefined
   const { runRemind } = await import("../cron/remind.js")
-  await runRemind()
+  await runRemind(markets)
   return c.json({ ok: true })
 })
 
