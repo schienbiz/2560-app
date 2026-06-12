@@ -49,6 +49,7 @@ async function verifyLine(token: string): Promise<string | null> {
   try {
     const res = await fetch("https://api.line.me/oauth2/v2.1/verify", {
       method: "POST",
+      signal: AbortSignal.timeout(5_000),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: `id_token=${encodeURIComponent(token)}&client_id=${channelId}`,
     })

@@ -1,4 +1,4 @@
-export { computeMA, lastN } from "./ma.js"
+export { computeMA, lastN, lastNonNull } from "./ma.js"
 export { computeEMA, computeRSI, computeMACD } from "./indicators.js"
 export { detectCross, scoreSignal, analyzeSymbol } from "./signal.js"
 export { computeStats } from "./stats.js"

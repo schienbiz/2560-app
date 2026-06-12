@@ -17,6 +17,7 @@ tradesRouter.get("/", async c => {
     where: { user_id: userId, platform },
     include: { signal: true },
     orderBy: { entry_date: "desc" },
+    take: 200,
   })
   return c.json(trades)
 })

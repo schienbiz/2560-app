@@ -27,7 +27,7 @@
  */
 
 import type { OHLCV } from "./types.js"
-import { computeMA, lastN } from "./ma.js"
+import { computeMA, lastN, lastNonNull } from "./ma.js"
 import { computeRSI, computeMACD } from "./indicators.js"
 
 export type SignalType = "golden_cross" | "death_cross" | "none"
@@ -121,8 +121,8 @@ export function scoreSignal(
 ): SignalResult {
   const { type: signal, index: crossIndex } = findRecentSignal(ma25, ma60, lookback)
 
-  const curMa25 = lastN(ma25, 1)[0] ?? null
-  const curMa60 = lastN(ma60, 1)[0] ?? null
+  const curMa25 = lastNonNull(ma25)
+  const curMa60 = lastNonNull(ma60)
 
   const closes  = ohlcv.map(b => b.close)
   const volumes = ohlcv.map(b => b.volume)
@@ -130,8 +130,8 @@ export function scoreSignal(
   // Compute RSI and MACD for latest bar (used both in scoring and returned to caller)
   const rsiSeries  = computeRSI(closes)
   const macdSeries = computeMACD(closes)
-  const latestRsi  = [...rsiSeries].reverse().find(v => v != null) ?? null
-  const latestHist = [...macdSeries.histogram].reverse().find(v => v != null) ?? null
+  const latestRsi  = lastNonNull(rsiSeries)
+  const latestHist = lastNonNull(macdSeries.histogram)
 
   if (signal === "none" || crossIndex === null) {
     return { signal, confidence: "low", ma25: curMa25, ma60: curMa60, crossIndex: null, rsi: latestRsi, macdHist: latestHist }
@@ -171,9 +171,9 @@ export function scoreSignal(
  * Uses findRecentSignal (lookback=5) so chart display catches crosses
  * from the last 5 bars, not just the exact last bar.
  */
-export function analyzeSymbol(ohlcv: OHLCV[]): SignalResult {
+export function analyzeSymbol(ohlcv: OHLCV[], fastPeriod = 25, slowPeriod = 60): SignalResult {
   const closes = ohlcv.map(b => b.close)
-  const ma25   = computeMA(closes, 25)
-  const ma60   = computeMA(closes, 60)
+  const ma25   = computeMA(closes, fastPeriod)
+  const ma60   = computeMA(closes, slowPeriod)
   return scoreSignal(ohlcv, ma25, ma60)
 }

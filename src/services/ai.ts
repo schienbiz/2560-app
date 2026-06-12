@@ -216,8 +216,11 @@ ${perspectives}
 4. 保持繁體中文、直接具體的風格，格式與原問題要求一致`
 
   try {
-    // Synthesize with the first successful provider — use full token budget
-    const synth = providers.find(p => ok.find(r => r.label === p.label))!
+    // Prefer a non-gatherOnly provider for synthesis (gatherOnly = reasoning model, less suited)
+    const synth = (
+      providers.filter(p => !p.gatherOnly).find(p => ok.find(r => r.label === p.label))
+      ?? providers.find(p => ok.find(r => r.label === p.label))
+    )!
     const final = await callProvider(
       `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, maxTokens, synth.extraHeaders
     )
@@ -250,13 +253,24 @@ function phaseLabel(phase: string): string {
   }
 }
 
-// Returns direction arrow + 5-bar % change for an MA series
+// Returns direction arrow + 5-bar % change for an MA series (no allocation — backward scan)
 function maSlope(series: (number | null)[], nBars = 5): string {
-  const vals = [...series].reverse().filter((v): v is number => v !== null).slice(0, nBars)
+  const vals: number[] = []
+  for (let i = series.length - 1; i >= 0 && vals.length < nBars; i--) {
+    if (series[i] !== null) vals.push(series[i] as number)
+  }
   if (vals.length < 2) return ""
   const pct = (vals[0] - vals[vals.length - 1]) / vals[vals.length - 1] * 100
   const dir  = pct > 0.05 ? "↑" : pct < -0.05 ? "↓" : "→"
   return `${dir}${Math.abs(pct).toFixed(1)}%（${nBars}日）`
+}
+
+// Last non-null value in a nullable series without allocating a copy
+function lastNonNull(series: (number | null)[]): number | null {
+  for (let i = series.length - 1; i >= 0; i--) {
+    if (series[i] !== null) return series[i] as number
+  }
+  return null
 }
 
 // ─── Historical signal outcomes (fed from SignalHistory table) ─────────────────
@@ -309,8 +323,8 @@ export async function analyzeChart(
   if (!lastBar) return "資料不足，無法分析。"
 
   const close = lastBar.close
-  const ma25v = [...data.ma25].reverse().find(v => v != null) ?? null
-  const ma60v = [...data.ma60].reverse().find(v => v != null) ?? null
+  const ma25v = lastNonNull(data.ma25)
+  const ma60v = lastNonNull(data.ma60)
 
   // Compute price action structure (swing points, trend phase, ATR)
   const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
@@ -434,8 +448,8 @@ export async function notifyInsight(
   if (!lastBar) return ""
 
   const close  = lastBar.close
-  const ma25   = [...data.ma25].reverse().find(v => v != null) ?? null
-  const ma60   = [...data.ma60].reverse().find(v => v != null) ?? null
+  const ma25   = lastNonNull(data.ma25)
+  const ma60   = lastNonNull(data.ma60)
   const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
 
   const signalCtx = signal === "golden_cross"

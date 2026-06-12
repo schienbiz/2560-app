@@ -87,7 +87,7 @@ export async function runMorningSummary() {
       const closes = ohlcv.map(b => b.close)
       const maFast = computeMA(closes, fastPeriod)
       const maSlow = computeMA(closes, slowPeriod)
-      const { signal, confidence } = scoreSignal(ohlcv, maFast, maSlow, 3)
+      const { signal, confidence, rsi, macdHist } = scoreSignal(ohlcv, maFast, maSlow, 3)
 
       if (signal === "none") return null
 
@@ -102,6 +102,8 @@ export async function runMorningSummary() {
         signal_date: null,
         support:     [],
         resistance:  [],
+        rsi,
+        macdHist,
       }
 
       const history = historyBySymbol.get(normalizedSymbol)

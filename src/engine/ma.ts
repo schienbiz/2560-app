@@ -36,3 +36,14 @@ export function lastN(series: (number | null)[], n: number): number[] {
   const values = series.filter((v): v is number => v !== null)
   return values.slice(-n)
 }
+
+/**
+ * Return the last non-null value in a series without allocating a copy.
+ * Replaces the [...series].reverse().find(v => v != null) pattern.
+ */
+export function lastNonNull(series: (number | null)[]): number | null {
+  for (let i = series.length - 1; i >= 0; i--) {
+    if (series[i] !== null) return series[i] as number
+  }
+  return null
+}
