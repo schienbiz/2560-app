@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "tsx watch server.ts",
     "start": "node --import tsx/esm server.ts",
+    "postinstall": "prisma generate",
     "build": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",

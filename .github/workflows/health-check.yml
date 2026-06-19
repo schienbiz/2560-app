@@ -18,7 +18,7 @@ jobs:
           }
 
           R1=$(check "https://voice-trainer.onrender.com/health")
-          R2=$(check "https://two560-app.onrender.com/health")
+          R2=$(check "${{ secrets.APP_URL }}/health")
           R3=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/health")
           R4=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/pm/api/status")
           R5=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/learn")

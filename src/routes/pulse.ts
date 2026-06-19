@@ -83,10 +83,12 @@ async function fetchPulseData(): Promise<PulseRow[]> {
 
 // ─── Share button JS ──────────────────────────────────────────────────────────
 
+const PULSE_URL = `${process.env.APP_URL ?? "https://two560-app.onrender.com"}/pulse`
+
 const shareScript = /* html */`
 <script>
 async function shareSymbol(symbol, signal, count) {
-  const text = \`我在用2560信號雷達追蹤\${symbol}，目前\${signal}，有\${count}位朋友也在追！\\nhttps://two560-app.onrender.com/pulse\`
+  const text = \`我在用2560信號雷達追蹤\${symbol}，目前\${signal}，有\${count}位朋友也在追！\\n${PULSE_URL}\`
   if (navigator.share) {
     try { await navigator.share({ text }); return } catch (e) { /* user cancelled */ }
   }

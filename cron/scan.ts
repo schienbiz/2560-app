@@ -23,7 +23,7 @@ import type { ChartData } from "../src/engine/types.js"
 import type { OHLCV, AssetType } from "../src/engine/types.js"
 
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
-const APP_URL        = "https://two560-app.onrender.com"
+const APP_URL        = process.env.APP_URL ?? "https://two560-app.onrender.com"
 
 type Market = "tw" | "us" | "crypto"
 

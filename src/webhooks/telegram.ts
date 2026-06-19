@@ -37,8 +37,8 @@ interface TgUpdate  { update_id: number; message?: TgMessage }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const APP_URL   = "https://two560-app.onrender.com"
-const PULSE_URL = "https://two560-app.onrender.com/pulse"
+const APP_URL   = process.env.APP_URL ?? "https://two560-app.onrender.com"
+const PULSE_URL = `${APP_URL}/pulse`
 
 async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
   const token = process.env.TELEGRAM_BOT_TOKEN
