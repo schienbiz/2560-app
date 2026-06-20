@@ -25,3 +25,11 @@ npx wrangler deploy
 
 ## 切換後端
 改 `wrangler.toml` 的 `BACKEND` 後 `npx wrangler deploy`；或 dashboard → Settings → Variables 改 `BACKEND`（秒級、自動重佈）。
+
+## ⚠️ 這個 repo 刻意保持 public（不要轉 private）
+此 repo `schienbiz/2560-app` **刻意 public**，是這套交替互補架構的前提，**不要轉 private**：
+- 現役後端在 **atungc2020** Render 帳號，跨帳號接 schienbiz 的 **private** repo 是 GitHub App 死結（App 綁單一帳號安裝）。
+- `.github/workflows/deploy-sync.yml` 靠 re-clone 公開 repo 觸發兩後端同步；轉 private 會**無聲失敗**，atungc2020 停止自動更新。
+- 已確認：tracked 檔無寫死 secret、`.env` 未被 git 追蹤、git 歷史無 `.env`。所有機密走 Render env / GitHub Actions secrets。
+
+若哪天非 private 不可，須同時：(a) atungc2020 改用 deploy-hook-only（不靠 clone）；(b) 解決跨帳號 GitHub 授權。在那之前，**把「轉 private」當成不存在的選項**。
