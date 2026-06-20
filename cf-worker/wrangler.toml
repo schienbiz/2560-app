@@ -1,0 +1,12 @@
+# 2560-app 固定前端 Worker 設定
+# 部署後網址 = https://two560-app.<你的帳號子網域>.workers.dev
+#
+# 切換後端：改下面 BACKEND，再 `npx wrangler deploy`（或在 dashboard 改 Variables 自動重佈，幾秒）。
+# 現在先指向 atungc2020 的免費服務；7/1 schienbiz 復活後可改指它（互為備援）。
+
+name = "two560-app"
+main = "worker.js"
+compatibility_date = "2026-06-19"
+
+[vars]
+BACKEND = "https://two560-app-2.onrender.com"
