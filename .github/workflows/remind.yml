@@ -13,3 +13,10 @@ jobs:
         run: |
           curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind?market=tw,crypto" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
+
+      - name: Alert on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.HEALTH_CHECK_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.HEALTH_CHECK_CHAT_ID }}" \
+            -d text="🔴 2560 remind(TW/crypto) 失敗 — 後端(Worker→two560-app-2)可能掛了，提醒未發出。查 Render dashboard / Actions log。" > /dev/null || true
