@@ -1,0 +1,33 @@
+name: Sync deploy to Render backends
+
+# push 到 main 時，自動觸發兩個 Render 後端重佈，讓「交替互補」的 standby 永遠保持最新。
+# 用 Render Deploy Hook（各服務 Settings → Deploy Hook 的 URL），存進 repo secrets：
+#   RENDER_HOOK_ATUNGC2020  = two560-app-2（現役，atungc2020）
+#   RENDER_HOOK_SCHIENBIZ   = two560-app（備援，schienbiz；7/1 復活後再設）
+# atungc2020(public-repo) 靠這個 hook 才會在 push 後自動重佈；schienbiz 原生 auto-deploy，
+# 設了 hook 只是雙保險。沒設的 secret 會自動略過。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger atungc2020 (two560-app-2) deploy
+        env:
+          HOOK: ${{ secrets.RENDER_HOOK_ATUNGC2020 }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "RENDER_HOOK_ATUNGC2020 未設定，略過"; exit 0; fi
+          curl -fsS -X POST "$HOOK" && echo "✅ atungc2020 deploy 已觸發"
+
+      - name: Trigger schienbiz (two560-app) deploy
+        if: always()
+        env:
+          HOOK: ${{ secrets.RENDER_HOOK_SCHIENBIZ }}
+        run: |
+          if [ -z "$HOOK" ]; then echo "RENDER_HOOK_SCHIENBIZ 未設定，略過（7/1 前可不設）"; exit 0; fi
+          curl -fsS -X POST "$HOOK" && echo "✅ schienbiz deploy 已觸發" \
+            || echo "⚠️ schienbiz hook 失敗（可能 suspended 中，非致命）"
