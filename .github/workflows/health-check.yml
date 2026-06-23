@@ -27,7 +27,7 @@ jobs:
           }
 
           L2=$(fmt "2560-app (CF Worker)" "$R2")
-          L3=$(fmt "marketing (chusMBp)" "$R3")
+          L3=$(fmt "chusMBp proxy" "$R3")
           L4=$(fmt "ai-pm (chusMBp)" "$R4")
           L5=$(fmt "ai-learning (chusMBp)" "$R5")
 
