@@ -1,19 +1,13 @@
-name: Keep-alive (DB + app)
+name: Keep-alive (app)
 
 on:
   schedule:
-    - cron: "0 */14 * * *"   # every 14 hours — keeps Render warm and Neon from pausing
+    - cron: "0 12 * * *"   # noon UTC — wakes Render in the 10:00-18:00 quiet window
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Install psql client
-        run: sudo apt-get install -y --no-install-recommends postgresql-client
-
-      - name: Ping database
-        run: psql "${{ secrets.DATABASE_URL }}" -c "SELECT 1"
-
       - name: Ping app
         run: curl -sf "${{ secrets.APP_URL }}/health" > /dev/null
