@@ -2,7 +2,7 @@ name: Keep-alive (app)
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # noon UTC — wakes Render in the 10:00-18:00 quiet window
+    - cron: "0 12 * * 1-5"   # noon UTC Mon–Fri — pre-warms Render 30 min before remind-us (12:30 UTC)
   workflow_dispatch:
 
 jobs:
