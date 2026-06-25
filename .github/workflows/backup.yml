@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Backup to artifact
         run: |
-          pg_dump "${{ secrets.DATABASE_URL }}" | gzip > backup-$(date +%Y%m%d).sql.gz
+          pg_dump "${{ secrets.DIRECT_URL }}" | gzip > backup-$(date +%Y%m%d).sql.gz
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
