@@ -11,7 +11,9 @@ jobs:
     steps:
       - name: Backup to artifact
         run: |
+          set -eo pipefail
           pg_dump "${{ secrets.DIRECT_URL }}" | gzip > backup-$(date +%Y%m%d).sql.gz
+          [ -s backup-$(date +%Y%m%d).sql.gz ] || { echo "Backup file is empty — pg_dump likely failed"; exit 1; }
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
