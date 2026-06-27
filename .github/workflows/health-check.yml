@@ -17,7 +17,7 @@ jobs:
             [ "$code" = "200" ] && echo "OK" || echo "FAIL:${code:-timeout}"
           }
 
-          R2=$(check "${{ secrets.APP_URL }}/health")
+          R2=$(check "${{ secrets.APP_URL }}/__up")
           R3=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/health")
           R4=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/pm/api/status")
           R5=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/learn")
