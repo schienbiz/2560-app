@@ -23,7 +23,7 @@ jobs:
         run: |
           set -eo pipefail
           BACKUP_FILE="backup-$(date +%Y%m%d).sql.gz"
-          pg_dump "${{ secrets.DIRECT_URL }}" | gzip > "$BACKUP_FILE"
+          /usr/lib/postgresql/17/bin/pg_dump "${{ secrets.DIRECT_URL }}" | gzip > "$BACKUP_FILE"
           [ -s "$BACKUP_FILE" ] || { echo "Backup file is empty — pg_dump likely failed"; exit 1; }
 
       - name: Upload backup artifact
