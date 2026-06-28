@@ -10,7 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install pg_dump 17
-        run: sudo apt-get install -y postgresql-client-17
+        run: |
+          sudo apt-get update -y -q
+          sudo apt-get install -y postgresql-client-17
 
       - name: Backup to artifact
         run: |
