@@ -22,22 +22,29 @@ jobs:
           R4=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/pm/api/status")
           R5=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/learn")
 
-          fmt() {
+          fmt_crit() {
             [ "$2" = "OK" ] && echo "[OK] $1" || echo "[FAIL] $1 ($2)"
           }
+          fmt_warn() {
+            [ "$2" = "OK" ] && echo "[OK] $1" || echo "[WARN] $1 ($2) — ngrok traffic policy"
+          }
 
-          L2=$(fmt "2560-app (CF Worker)" "$R2")
-          L3=$(fmt "chusMBp proxy" "$R3")
-          L4=$(fmt "ai-pm (chusMBp)" "$R4")
-          L5=$(fmt "ai-learning (chusMBp)" "$R5")
+          L2=$(fmt_crit "2560-app (CF Worker)" "$R2")
+          L3=$(fmt_warn "chusMBp proxy" "$R3")
+          L4=$(fmt_warn "ai-pm (chusMBp)" "$R4")
+          L5=$(fmt_warn "ai-learning (chusMBp)" "$R5")
 
-          FAILS=$(printf '%s\n' "$R2" "$R3" "$R4" "$R5" | grep -c "^FAIL" || true)
+          # ngrok ERR_NGROK_727 blocks non-browser curl — only count critical services as FAIL
+          CRITICAL_FAILS=$(printf '%s\n' "$R2" | grep -c "^FAIL" || true)
+          ALL_WARNS=$(printf '%s\n' "$R3" "$R4" "$R5" | grep -c "^FAIL" || true)
           DATE=$(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M Taipei')
 
-          if [ "$FAILS" -eq 0 ]; then
-            HEADER="All services healthy (${DATE})"
+          if [ "$CRITICAL_FAILS" -eq 0 ] && [ "$ALL_WARNS" -eq 0 ]; then
+            HEADER="✅ All services healthy (${DATE})"
+          elif [ "$CRITICAL_FAILS" -eq 0 ]; then
+            HEADER="⚠️ ${ALL_WARNS} chusMBp service(s) warn (ngrok) (${DATE})"
           else
-            HEADER="${FAILS} service(s) DOWN (${DATE})"
+            HEADER="🔴 ${CRITICAL_FAILS} critical service(s) DOWN (${DATE})"
           fi
 
           MSG=$(printf '%s\n%s\n%s\n%s\n%s' "$HEADER" "$L2" "$L3" "$L4" "$L5")
@@ -48,4 +55,4 @@ jobs:
             --data-urlencode "chat_id=${{ secrets.HEALTH_CHECK_CHAT_ID }}" \
             --data-urlencode "text=${MSG}" > /dev/null
 
-          [ "$FAILS" -eq 0 ] || exit 1
+          [ "$CRITICAL_FAILS" -eq 0 ] || exit 1
