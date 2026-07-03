@@ -10,7 +10,9 @@
   or freshly-listed symbols those factors have no data — previously they were counted
   as failures, systematically capping an otherwise strong cross at `medium`/`low`.
   With full history all four factors apply and the thresholds reduce exactly to the
-  original `3+→high / 2→medium / ≤1→low`, so established symbols are unchanged.
+  original `3+→high / 2→medium / ≤1→low`, so established symbols are unchanged. `high`
+  additionally requires ≥2 applicable factors, so a lone surviving factor (e.g. a
+  zero-volume symbol where only proximity applies) can't reach top confidence on 1/1.
 
 ### Added
 - **CI unit-test gate** (`.github/workflows/test.yml`): runs `tsc --noEmit` + `vitest`

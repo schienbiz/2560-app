@@ -101,6 +101,19 @@ describe("scoreSignal — short history (only volume + proximity apply)", () => 
     expect(result.confidence).toBe("medium")
   })
 
+  it("1/1 applicable (proximity only, zero volume) → medium, not high", () => {
+    // Zero volume everywhere → volume factor doesn't apply; RSI/MACD null on
+    // 11 bars. Only proximity applies and passes: 1/1 = 100%, but the ≥2
+    // breadth guard caps a lone factor at medium.
+    const ohlcv: OHLCV[] = [
+      ...Array(10).fill(bar(100, 0)),
+      bar(102, 0),      // close near MA60, no volume signal
+    ]
+    const ma25 = [...Array(10).fill(99), 101] as (number | null)[]
+    const ma60 = Array(11).fill(100) as (number | null)[]
+    expect(scoreSignal(ohlcv, ma25, ma60).confidence).toBe("medium")
+  })
+
   it("0/2 applicable pass → low (no volume spike, proximity far)", () => {
     const ohlcv: OHLCV[] = [
       ...Array(10).fill(bar(100, 1000)),

@@ -177,8 +177,11 @@ export function scoreSignal(
   const applicable = [volApplies, proxApplies, rsiApplies, macdApplies].filter(Boolean).length
   const passed     = [volOk, proximityOk, rsiOk, macdOk].filter(Boolean).length
   const ratio      = applicable > 0 ? passed / applicable : 0
+  // "high" also requires ≥2 independent confirmations, so a lone surviving
+  // factor (e.g. proximity only, when volume is 0 and RSI/MACD lack history)
+  // can't reach top confidence on 1/1 = 100%.
   const confidence: Confidence =
-    ratio >= 0.75 ? "high"
+    ratio >= 0.75 && applicable >= 2 ? "high"
     : ratio >= 0.5 ? "medium"
     : "low"
 
