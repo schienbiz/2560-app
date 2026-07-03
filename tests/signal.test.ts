@@ -66,25 +66,30 @@ describe("detectCross", () => {
 })
 
 // ─── scoreSignal (crafted ohlcv + explicit MA arrays) ────────────────────────
+//
+// Confidence = passed / applicable factors. RSI needs ≥15 bars, MACD needs
+// ≥34 bars, so on short (11-bar) history only volume + proximity apply and the
+// denominator is 2; with ≥34 bars all four apply and the denominator is 4.
 
-describe("scoreSignal", () => {
-  it("rates high confidence when volume spikes and close is near MA60", () => {
-    // Craft OHLCV so the cross bar (last) has high volume and close ≈ MA60
+describe("scoreSignal — short history (only volume + proximity apply)", () => {
+  it("2/2 applicable pass → high (RSI/MACD null must not cap it at medium)", () => {
+    // 11 bars < 15 → RSI/MACD null → excluded. Regression guard for the
+    // short-history under-scoring bug: this used to yield 2/4 = medium.
     const ohlcv: OHLCV[] = [
       ...Array(10).fill(bar(100, 1000)),
-      bar(102, 2000),   // cross bar: close=102, vol=2000 (>1200 avg×1.2)
+      bar(102, 2000),   // cross bar: close=102, vol=2000 (>1100×1.2=1320) ✓
     ]
-    // Explicit MA arrays: cross at bar 10 (the last bar)
     const ma25 = [...Array(10).fill(99), 101] as (number | null)[]
     const ma60 = Array(11).fill(100) as (number | null)[]
-    // avg vol of last 10 bars = (9×1000 + 2000)/10 = 1100; 2000 > 1100×1.2=1320 ✓
-    // proximity: |102 - 100|/100 = 2% ≤ 15% ✓  → confidence HIGH
+    // proximity: |102 - 100|/100 = 2% ≤ 15% ✓  → 2/2 applicable pass → HIGH
     const result = scoreSignal(ohlcv, ma25, ma60)
     expect(result.signal).toBe("golden_cross")
+    expect(result.rsi).toBeNull()      // proves RSI is genuinely absent here
+    expect(result.macdHist).toBeNull()
     expect(result.confidence).toBe("high")
   })
 
-  it("rates medium confidence when volume spikes but close is far from MA60", () => {
+  it("1/2 applicable pass → medium (volume spikes, proximity far)", () => {
     const ohlcv: OHLCV[] = [
       ...Array(10).fill(bar(100, 1000)),
       bar(140, 2000),   // close 40% above MA60 → proximity fails
@@ -96,6 +101,69 @@ describe("scoreSignal", () => {
     expect(result.confidence).toBe("medium")
   })
 
+  it("1/1 applicable (proximity only, zero volume) → medium, not high", () => {
+    // Zero volume everywhere → volume factor doesn't apply; RSI/MACD null on
+    // 11 bars. Only proximity applies and passes: 1/1 = 100%, but the ≥2
+    // breadth guard caps a lone factor at medium.
+    const ohlcv: OHLCV[] = [
+      ...Array(10).fill(bar(100, 0)),
+      bar(102, 0),      // close near MA60, no volume signal
+    ]
+    const ma25 = [...Array(10).fill(99), 101] as (number | null)[]
+    const ma60 = Array(11).fill(100) as (number | null)[]
+    expect(scoreSignal(ohlcv, ma25, ma60).confidence).toBe("medium")
+  })
+
+  it("0/2 applicable pass → low (no volume spike, proximity far)", () => {
+    const ohlcv: OHLCV[] = [
+      ...Array(10).fill(bar(100, 1000)),
+      bar(140, 1000),   // no vol spike, close far → both fail
+    ]
+    const ma25 = [...Array(10).fill(99), 101] as (number | null)[]
+    const ma60 = Array(11).fill(100) as (number | null)[]
+    expect(scoreSignal(ohlcv, ma25, ma60).confidence).toBe("low")
+  })
+})
+
+describe("scoreSignal — full history (all four factors apply)", () => {
+  // 40 rising bars → RSI > 50 and MACD histogram > 0, so both momentum factors
+  // are present AND aligned with a golden cross.
+  function risingOhlcv(volAtLast = 2000): OHLCV[] {
+    const bars: OHLCV[] = []
+    for (let i = 0; i < 40; i++) bars.push(bar(85 + i * (15 / 39), 1000))
+    bars[39] = { ...bars[39], volume: volAtLast }
+    return bars
+  }
+  // Cross lands on the last bar; MA60 = 100 so close (≈100) is right at it.
+  const risingMa25 = [...Array(39).fill(99), 101] as (number | null)[]
+  const risingMa60 = Array(40).fill(100) as (number | null)[]
+
+  it("4/4 apply and pass → high", () => {
+    const result = scoreSignal(risingOhlcv(), risingMa25, risingMa60)
+    expect(result.signal).toBe("golden_cross")
+    expect(result.rsi).not.toBeNull()      // RSI/MACD genuinely present now
+    expect(result.macdHist).not.toBeNull()
+    expect(result.confidence).toBe("high")
+  })
+
+  it("2/4 apply-and-pass → medium (RSI & MACD misaligned on a falling series)", () => {
+    // 40 falling bars → RSI < 50, MACD hist < 0: both momentum factors present
+    // but fail directional alignment for a golden cross. Volume + proximity pass.
+    const bars: OHLCV[] = []
+    for (let i = 0; i < 40; i++) bars.push(bar(100 - i * (15 / 39), 1000))
+    bars[39] = { ...bars[39], volume: 2000 }   // vol spike ✓
+    const closeLast = bars[39].close           // ≈ 85
+    const ma60 = Array(40).fill(closeLast) as (number | null)[]  // proximity ✓
+    const ma25 = [...Array(39).fill(closeLast - 1), closeLast + 1] as (number | null)[]
+    const result = scoreSignal(bars, ma25, ma60)
+    expect(result.signal).toBe("golden_cross")
+    expect((result.rsi as number) < 50).toBe(true)
+    expect((result.macdHist as number) < 0).toBe(true)
+    expect(result.confidence).toBe("medium")   // vol+prox = 2/4
+  })
+})
+
+describe("scoreSignal — no cross", () => {
   it("returns signal=none on a flat series with no cross", () => {
     const ohlcv = Array(90).fill(bar(100))
     const closes = ohlcv.map((b: OHLCV) => b.close)
