@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.1] — 2026-07-02
+
+### Fixed
+- **Signal confidence no longer under-scores short-history symbols**: `scoreSignal`
+  now computes confidence as the fraction of *applicable* factors that pass
+  (`passed / applicable`) rather than a raw count out of 4. RSI needs ≥15 bars and
+  MACD needs ≥34 bars, so on small custom MA pairs (`slow_period` can be as low as 3)
+  or freshly-listed symbols those factors have no data — previously they were counted
+  as failures, systematically capping an otherwise strong cross at `medium`/`low`.
+  With full history all four factors apply and the thresholds reduce exactly to the
+  original `3+→high / 2→medium / ≤1→low`, so established symbols are unchanged.
+
+### Added
+- **CI unit-test gate** (`.github/workflows/test.yml`): runs `tsc --noEmit` + `vitest`
+  on every push/PR to `main`. Previously no workflow ran the test suite, so a stale
+  `signal.test.ts` (left on the 2-factor model after the engine moved to 4 factors)
+  failed silently. Also refreshed the `scoreSignal` tests to cover the applicable-ratio
+  model for both short and full history.
+
 ## [1.3.0] — 2026-04-27
 
 ### Added

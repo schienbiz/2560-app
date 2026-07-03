@@ -109,9 +109,18 @@ export function findRecentSignal(
  * Factor 3 — RSI:       RSI(14) > 50 for golden; < 50 for death cross
  * Factor 4 — MACD:      MACD(12/26/9) histogram ≥ 0 for golden; ≤ 0 for death
  *
- * high:   3+ of 4 pass
- * medium: 2 of 4 pass
- * low:    0–1 pass
+ * Confidence is the fraction of *applicable* factors that pass, not a raw
+ * count. RSI needs ≥15 bars and MACD needs ≥34 bars, so on short history
+ * (small custom MA pairs, freshly-listed symbols) those factors have no data
+ * and are excluded from the denominator rather than counted as failures —
+ * otherwise a strong cross would be systematically capped at medium/low.
+ *
+ * high:   ≥75% of applicable factors pass
+ * medium: ≥50% of applicable factors pass
+ * low:    below 50%
+ *
+ * With full history all 4 factors apply and this reduces exactly to the
+ * original 3+→high / 2→medium / ≤1→low thresholds.
  */
 export function scoreSignal(
   ohlcv: OHLCV[],
@@ -137,30 +146,40 @@ export function scoreSignal(
     return { signal, confidence: "low", ma25: curMa25, ma60: curMa60, crossIndex: null, rsi: latestRsi, macdHist: latestHist }
   }
 
+  // Each factor tracks (a) whether it *applies* (has enough data) and (b) whether
+  // it passed. Confidence is passed / applicable, so missing RSI/MACD on short
+  // history neither counts against nor inflates the score.
+
   // ── Factor 1: Volume — cross-bar volume > 10-day avg × 1.2 ──────────────
   const recentVol = volumes.slice(Math.max(0, crossIndex - 10), crossIndex)
   const avgVol    = recentVol.length > 0
     ? recentVol.reduce((s, v) => s + v, 0) / recentVol.length : 0
   const signalVol = volumes[crossIndex] ?? 0
-  const volOk     = avgVol > 0 && signalVol > avgVol * 1.2
+  const volApplies = avgVol > 0
+  const volOk      = volApplies && signalVol > avgVol * 1.2
 
   // ── Factor 2: Proximity — latest close within 15% of MA60 ───────────────
   const latestClose = closes[closes.length - 1] ?? 0
-  const proximityOk = curMa60 != null
-    ? Math.abs(latestClose - curMa60) / curMa60 <= 0.15 : false
+  const proxApplies = curMa60 != null && curMa60 !== 0
+  const proximityOk = proxApplies
+    ? Math.abs(latestClose - (curMa60 as number)) / (curMa60 as number) <= 0.15 : false
 
-  // ── Factor 3: RSI directional alignment ──────────────────────────────────
-  const rsiOk = latestRsi != null
-    ? (signal === "golden_cross" ? latestRsi > 50 : latestRsi < 50) : false
+  // ── Factor 3: RSI directional alignment (needs ≥15 bars) ─────────────────
+  const rsiApplies = latestRsi != null
+  const rsiOk      = rsiApplies
+    ? (signal === "golden_cross" ? (latestRsi as number) > 50 : (latestRsi as number) < 50) : false
 
-  // ── Factor 4: MACD histogram momentum confirmation ───────────────────────
-  const macdOk = latestHist != null
-    ? (signal === "golden_cross" ? latestHist > 0 : latestHist < 0) : false
+  // ── Factor 4: MACD histogram momentum confirmation (needs ≥34 bars) ──────
+  const macdApplies = latestHist != null
+  const macdOk      = macdApplies
+    ? (signal === "golden_cross" ? (latestHist as number) > 0 : (latestHist as number) < 0) : false
 
-  const passed = [volOk, proximityOk, rsiOk, macdOk].filter(Boolean).length
+  const applicable = [volApplies, proxApplies, rsiApplies, macdApplies].filter(Boolean).length
+  const passed     = [volOk, proximityOk, rsiOk, macdOk].filter(Boolean).length
+  const ratio      = applicable > 0 ? passed / applicable : 0
   const confidence: Confidence =
-    passed >= 3 ? "high"
-    : passed >= 2 ? "medium"
+    ratio >= 0.75 ? "high"
+    : ratio >= 0.5 ? "medium"
     : "low"
 
   return { signal, confidence, ma25: curMa25, ma60: curMa60, crossIndex, rsi: latestRsi, macdHist: latestHist }

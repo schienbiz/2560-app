@@ -1,0 +1,32 @@
+name: Test（單元測試門檻）
+
+# push / PR 到 main 時跑 tsc + vitest。
+# 這是唯一會執行單元測試的 workflow — 沒有它，signal 引擎的回歸會靜默溜進 main。
+# 其餘 workflow 都是維運型（scan / backup / health / keepalive），不驗程式正確性。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install（postinstall 會跑 prisma generate，不需 DB 連線）
+        run: npm ci
+
+      - name: Typecheck（tsc --noEmit）
+        run: npm run build
+
+      - name: Unit tests（vitest run）
+        run: npm test
