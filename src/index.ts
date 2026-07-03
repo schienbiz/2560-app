@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import { readFileSync } from "node:fs"
 import { serveStatic } from "@hono/node-server/serve-static"
 import { chartRouter }     from "./routes/chart.js"
 import { watchlistRouter } from "./routes/watchlist.js"
@@ -12,6 +13,18 @@ import { handleLineWebhook }     from "./webhooks/line.js"
 import { handleTelegramWebhook } from "./webhooks/telegram.js"
 import { pulseRouter }           from "./routes/pulse.js"
 
+// Build stamp so a deploy is verifiable from outside: /health reports the
+// package version and the running commit. Render injects RENDER_GIT_COMMIT
+// automatically; falls back to a local git-less "dev".
+const VERSION: string = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version ?? "unknown"
+  } catch {
+    return "unknown"
+  }
+})()
+const GIT_SHA: string = (process.env.RENDER_GIT_COMMIT ?? process.env.GIT_SHA ?? "dev").slice(0, 7)
+
 const app = new Hono()
 
 app.onError((err, c) => {
@@ -19,7 +32,7 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error" }, 500)
 })
 
-app.get("/health", c => c.json({ ok: true, service: "2560-app" }))
+app.get("/health", c => c.json({ ok: true, service: "2560-app", version: VERSION, sha: GIT_SHA }))
 
 // ─── API ─────────────────────────────────────────────────────────────────────
 app.route("/api",           chartRouter)
