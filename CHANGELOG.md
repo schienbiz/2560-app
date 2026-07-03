@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.2] — 2026-07-03
+
+### Added
+- **Deploy verifiability**: `/health` now reports `version` (from `package.json`) and
+  `sha` (the running commit, from Render's `RENDER_GIT_COMMIT`, 7 chars; `dev` locally).
+  Previously `/health` returned only `{ok, service}`, so a deploy couldn't be confirmed
+  from outside — a `200` proved the service was up but not which commit was serving.
+
 ## [1.3.1] — 2026-07-02
 
 ### Fixed
