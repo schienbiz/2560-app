@@ -215,6 +215,56 @@ feature should be shipped first so there's something to link to.
 
 ---
 
+## Confidence factors: RSI/MACD measured at latest bar, not cross bar
+
+**What:** In `scoreSignal` (`src/engine/signal.ts`), factor 1 (volume) is evaluated at the
+cross bar (`volumes[crossIndex]`), but factors 3 and 4 (RSI, MACD) use `lastNonNull(...)` —
+the *latest* bar. When the cross happened a few bars ago (findRecentSignal lookback is up to
+5), the momentum factors describe "now", not the moment of the cross.
+
+**Why:** For confidence to mean "how well-confirmed was this cross", all four factors should
+be read at the same reference point (the cross bar). Mixing cross-bar and latest-bar readings
+means a cross that was strong when it fired can be downgraded by a later pullback, or vice
+versa. It's a subtle scoring skew, not a correctness bug.
+
+**Pros:** Coherent, single-reference-point confidence. Easier to explain in the manual.
+**Cons:** Changes confidence values for any symbol whose cross is not on the latest bar —
+needs new golden-master test values. Also arguably the *current* behavior (latest-bar momentum)
+is what a trader deciding "should I act now" wants, so this is a product call, not a clear fix.
+
+**Context:** Surfaced during the 2026-07-02 極致優化 review of the confidence engine, alongside
+the applicable-ratio fix (v1.3.1). Deliberately left as-is because the two readings serve
+different questions ("was the cross clean" vs "is momentum aligned right now"). Decide the
+intended semantics before changing.
+
+**Depends on:** A product decision on what confidence should measure. Independent otherwise.
+
+---
+
+## Standby Render backend: set RENDER_HOOK_SCHIENBIZ secret
+
+**What:** Set the `RENDER_HOOK_SCHIENBIZ` GitHub Actions secret (the `two560-app` /
+schienbiz service's Render Deploy Hook URL) so `deploy-sync.yml` redeploys the standby
+backend on every push to `main`, keeping the "alternating complement" standby current.
+
+**Why:** `deploy-sync.yml` already fires the primary hook (`RENDER_HOOK_ATUNGC2020`,
+verified triggering on the v1.3.2 deploy). The schienbiz step is coded but the secret is
+unset, so it silently skips — the workflow comment noted "7/1 前可不設", and that date has
+now passed (today is 2026-07-03). Until it's set, the standby can drift behind the primary
+and won't be a clean failover.
+
+**Pros:** True hot standby — both backends always run the same commit. Faster failover if
+the primary suspends.
+**Cons:** None beyond one-time secret setup. schienbiz must be un-suspended first for the
+hook to exist.
+
+**Context:** Observed during the 2026-07-02 deploy of v1.3.2: the deploy-sync log printed
+"RENDER_HOOK_SCHIENBIZ 未設定，略過（7/1 前可不設）". Operational, not product.
+
+**Depends on:** schienbiz Render service being live so it has a Deploy Hook URL to copy.
+
+---
+
 ## Completed
 
 ### Configurable proximity threshold per-symbol
