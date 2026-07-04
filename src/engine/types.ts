@@ -22,4 +22,5 @@ export interface ChartData {
   resistance:  number[]
   rsi?:       number | null   // RSI(14) at latest bar
   macdHist?:  number | null   // MACD(12/26/9) histogram at latest bar
+  insufficient_history?: boolean  // true when bar count < slow_period + 5 → signal suppressed
 }

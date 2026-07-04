@@ -9,7 +9,7 @@
 
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
-import { computeMA, scoreSignal } from "../src/engine/index.js"
+import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
 import { getCachedOHLCV } from "../src/cache.js"
 import { analyzeChart, type SignalHistoryEntry } from "../src/services/ai.js"
 import { pushLine, pushTelegram } from "./notify.js"
@@ -82,7 +82,7 @@ export async function runMorningSummary() {
       const minBars = slowPeriod + 30
       const cacheDays = Math.max(120, Math.ceil(minBars * (watchlist.asset_type === "crypto" ? 1 : 1.45)))
       const ohlcv = await getCachedOHLCV(normalizedSymbol, watchlist.asset_type, cacheDays)
-      if (!ohlcv || ohlcv.length < slowPeriod + 5) return null
+      if (!ohlcv || !hasSufficientBars(ohlcv.length, slowPeriod)) return null
 
       const closes = ohlcv.map(b => b.close)
       const maFast = computeMA(closes, fastPeriod)

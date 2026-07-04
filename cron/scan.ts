@@ -13,7 +13,7 @@
 
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
-import { computeMA, scoreSignal } from "../src/engine/index.js"
+import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
 import { notifyInsight } from "../src/services/ai.js"
 import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
@@ -114,7 +114,7 @@ export async function runScan(markets?: Market[]) {
       const closes = ohlcv.map(b => b.close)
 
       // Bar guard: skip if insufficient history for the configured slow period
-      if (closes.length < slowPeriod + 5) {
+      if (!hasSufficientBars(closes.length, slowPeriod)) {
         console.warn(`  ⚠ ${normalizedSymbol} insufficient_data: ${closes.length} bars < ${slowPeriod + 5} needed`)
         return
       }

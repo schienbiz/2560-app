@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { detectCross, scoreSignal, analyzeSymbol } from "../src/engine/signal.js"
+import { detectCross, scoreSignal, analyzeSymbol, hasSufficientBars } from "../src/engine/signal.js"
 import { computeMA } from "../src/engine/ma.js"
 import type { OHLCV } from "../src/engine/types.js"
 
@@ -160,6 +160,23 @@ describe("scoreSignal — full history (all four factors apply)", () => {
     expect((result.rsi as number) < 50).toBe(true)
     expect((result.macdHist as number) < 0).toBe(true)
     expect(result.confidence).toBe("medium")   // vol+prox = 2/4
+  })
+})
+
+describe("hasSufficientBars — slow-MA cross trust gate", () => {
+  it("needs slowPeriod + 5 bars (MA60 boundary)", () => {
+    expect(hasSufficientBars(64, 60)).toBe(false)  // slow MA barely initialized
+    expect(hasSufficientBars(65, 60)).toBe(true)   // 5 settled bars past init
+    expect(hasSufficientBars(100, 60)).toBe(true)
+  })
+
+  it("scales with a small custom slow period (MA3)", () => {
+    expect(hasSufficientBars(7, 3)).toBe(false)
+    expect(hasSufficientBars(8, 3)).toBe(true)
+  })
+
+  it("rejects an empty series", () => {
+    expect(hasSufficientBars(0, 60)).toBe(false)
   })
 })
 

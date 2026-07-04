@@ -11,7 +11,7 @@ import { authMiddleware } from "../auth.js"
 import { analyzeChart, type SignalHistoryEntry } from "../services/ai.js"
 import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
-import { scoreSignal } from "../engine/signal.js"
+import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { computeSR } from "../engine/sr.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 import { db } from "../db.js"
@@ -49,6 +49,7 @@ aiRouter.post("/analyze/:symbol", async c => {
     const ma25   = computeMA(closes, fastPeriod)
     const ma60   = computeMA(closes, slowPeriod)
     const result = scoreSignal(ohlcv, ma25, ma60)
+    const enough = hasSufficientBars(ohlcv.length, slowPeriod)
     const sr     = computeSR(ohlcv)
 
     const data: ChartData = {
@@ -57,13 +58,14 @@ aiRouter.post("/analyze/:symbol", async c => {
       ohlcv,
       ma25,
       ma60,
-      signal:      result.signal,
-      confidence:  result.confidence,
-      signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
+      signal:      enough ? result.signal : "none",
+      confidence:  enough ? result.confidence : "low",
+      signal_date: enough && result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
       support:     sr.support,
       resistance:  sr.resistance,
       rsi:         result.rsi,
       macdHist:    result.macdHist,
+      insufficient_history: !enough,
     }
 
     // Fetch historical signal outcomes for this symbol — gives AI real win rate context

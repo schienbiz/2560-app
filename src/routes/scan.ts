@@ -12,7 +12,7 @@ import { db } from "../db.js"
 import { authMiddleware } from "../auth.js"
 import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
-import { scoreSignal } from "../engine/signal.js"
+import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 
 export const scanRouter = new Hono()
@@ -42,14 +42,15 @@ scanRouter.get("/", async c => {
       const maFast = computeMA(closes, fastPeriod)
       const maSlow = computeMA(closes, slowPeriod)
       const result = scoreSignal(ohlcv, maFast, maSlow)
+      const enough = hasSufficientBars(ohlcv.length, slowPeriod)
       const latest = ohlcv[ohlcv.length - 1]
 
       return {
         symbol:      item.symbol,
         asset_type:  assetType,
         close:       latest?.close ?? null,
-        signal:      result.signal,
-        confidence:  result.confidence,
+        signal:      enough ? result.signal : "none",
+        confidence:  enough ? result.confidence : "low",
         ma25:        result.ma25,
         ma60:        result.ma60,
         fast_period: fastPeriod,

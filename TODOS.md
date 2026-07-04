@@ -186,6 +186,10 @@ bar depth is insufficient for the requested period.
 
 **Context:** Found during /plan-eng-review 2026-05-13. Currently defended by the bar guard.
 Fix during any future cache refactor. Do not fix in isolation — it changes cache behavior.
+Update 2026-07-03: the interactive/live surfaces (chart, scan, ws, ai) now also gate on
+`hasSufficientBars(len, slowPeriod)` and flag `insufficient_history`, so an under-provisioned
+cache no longer emits a phantom cross — it returns `signal: none` + the flag. The cache still
+returns too-few bars though; this item is the root fix.
 
 **Depends on:** Any future cache layer refactor. Independent otherwise.
 
@@ -262,6 +266,75 @@ hook to exist.
 "RENDER_HOOK_SCHIENBIZ 未設定，略過（7/1 前可不設）". Operational, not product.
 
 **Depends on:** schienbiz Render service being live so it has a Deploy Hook URL to copy.
+
+---
+
+## cache.ts isStale freezes an intraday bar until next 08:00 UTC
+
+**What:** In `src/cache.ts` `isStale`, a stock bar fetched during market hours is kept fresh
+until `08:00 UTC the next day`. So today's last bar — which may be a mid-session price when
+the fetch happened during trading — is served unchanged through the real close and until the
+next morning. The MA25/MA60 last point is then computed off an intraday value, not the settled
+daily close, until the cache rolls over.
+
+**Why:** The 2560 strategy is a daily-close strategy. If a user opens the chart at 1pm ET, the
+last bar caches the 1pm price; after the 4pm close the cache still serves the 1pm value until
+8am UTC tomorrow. Cross detection on the last bar can therefore differ from the real EOD result.
+The nightly cron scan runs after close so its writes are correct; this only skews on-demand
+reads (chart / ws / ai) made during or shortly after market hours.
+
+**Pros:** Last MA point reflects the true daily close, not a stale intraday snapshot.
+**Cons:** More refetches (can't cache the in-progress bar for the whole day). Needs a "is this
+bar for today and is the market still open / just closed" check, which is timezone-per-exchange.
+
+**Context:** Found during the 2026-07-03 極致優化 precision audit. Confirmed by reading
+`cache.ts:18-22`. Lower priority than a wrong signal because the nightly scan (the alerting
+path) is unaffected — only the interactive display drifts intraday.
+
+**Depends on:** Per-exchange market-hours awareness (TW 13:30, US 16:00 local). Independent.
+
+---
+
+## Crypto: last daily candle is the in-progress UTC day (provisional cross)
+
+**What:** `src/adapters/binance.ts` (Kraken) returns the current, not-yet-closed UTC-day candle
+as the last OHLC row. So the last MA point for crypto updates live, and a golden/death cross on
+the latest bar is provisional until 00:00 UTC settles the day.
+
+**Why:** A crypto cross shown midday can disappear by day close if price reverts. For a daily
+strategy this is a real "is this signal final?" ambiguity. The nightly scan catches whatever
+value is current at its scheduled run, which may not be the settled close.
+
+**Pros:** Signals only fire on settled daily closes → no intraday flip-flop.
+**Cons:** Requires dropping or specially-marking the in-progress candle, and choosing a scan
+time aligned to 00:00 UTC. Trades immediacy for finality — arguably the current live behavior
+is what an active crypto trader wants.
+
+**Context:** Found during the 2026-07-03 precision audit (`binance.ts:86-97`). Inherent to using
+Kraken's live candle, not a bug. Decide the intended semantics (settled vs live) before changing.
+
+**Depends on:** A product decision on settled-close vs live-candle crypto signals.
+
+---
+
+## TW live quote (TWSE) and history (Yahoo) come from different sources
+
+**What:** For Taiwan stocks, the real-time price uses TWSE (`yahoo.ts:_twseQuote`) while the
+OHLCV history that MAs are computed from uses Yahoo. The displayed current price and the last MA
+point therefore come from two feeds that can disagree slightly (Yahoo TW data is often delayed
+or adjusted differently).
+
+**Why:** A user can see a live price that doesn't line up with where the MA25 line sits, which
+looks like a bug even though both are individually correct. Cross detection itself is unaffected
+(the nightly scan uses Yahoo closes consistently) — this is a display-consistency gap only.
+
+**Pros:** Live price and MA history come from one coherent source.
+**Cons:** TWSE has no long daily history endpoint here; unifying means either backfilling history
+from TWSE or accepting Yahoo for the live price too (losing the broker-grade real-time quote).
+
+**Context:** Found during the 2026-07-03 precision audit. Cosmetic; lowest priority of the batch.
+
+**Depends on:** Nothing hard. Revisit if users report price/MA mismatch confusion.
 
 ---
 
