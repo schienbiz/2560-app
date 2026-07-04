@@ -33,6 +33,20 @@ import { computeRSI, computeMACD } from "./indicators.js"
 export type SignalType = "golden_cross" | "death_cross" | "none"
 export type Confidence = "high" | "medium" | "low"
 
+/**
+ * Minimum bars needed before a slow-MA cross can be trusted.
+ *
+ * computeMA(closes, slowPeriod) is null until index slowPeriod-1, so the first
+ * few computable MA values are the series just initializing. A fast/slow cross
+ * detected in that window is an artifact of the MA turning on, not a real
+ * crossover. Require `slowPeriod + 5` bars so there is settled MA history on
+ * both sides of any detected cross. Callers that fetch from a thin cache (see
+ * cache.ts bar-depth) must gate on this before trusting a signal.
+ */
+export function hasSufficientBars(barCount: number, slowPeriod: number): boolean {
+  return barCount >= slowPeriod + 5
+}
+
 export interface SignalResult {
   signal:      SignalType
   confidence:  Confidence

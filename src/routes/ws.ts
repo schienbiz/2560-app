@@ -19,7 +19,7 @@ import { resolveAuth, type AuthUser } from "../auth.js"
 import { db } from "../db.js"
 import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
-import { scoreSignal } from "../engine/signal.js"
+import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
 
 const INTERVAL_MS     = 10_000
@@ -67,6 +67,7 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
       const maFast = computeMA(closes, fastPeriod)
       const maSlow = computeMA(closes, slowPeriod)
       const result = scoreSignal(ohlcv, maFast, maSlow)
+      const enough = hasSufficientBars(ohlcv.length, slowPeriod)
       const latest = ohlcv[ohlcv.length - 1]
 
       // Try live quote; fall back to last OHLCV close when unavailable (market closed, etc.)
@@ -85,8 +86,9 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
         ma60:        maSlow[maSlow.length - 1] ?? null,
         fast_period: fastPeriod,
         slow_period: slowPeriod,
-        signal:      result.signal,
-        confidence:  result.confidence,
+        signal:      enough ? result.signal : "none",
+        confidence:  enough ? result.confidence : "low",
+        insufficient_history: !enough,
       }))
     } catch {
       // Skip failed symbols — don't kill the whole push cycle.

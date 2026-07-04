@@ -26,6 +26,48 @@ const BASE       = "https://query1.finance.yahoo.com/v8/finance/chart"
 const QUOTE_BASE = "https://query1.finance.yahoo.com/v7/finance/quote"
 const TWSE_BASE  = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
 
+interface YahooQuoteArrays {
+  open:   (number | null)[]
+  high:   (number | null)[]
+  low:    (number | null)[]
+  close:  (number | null)[]
+  volume: (number | null)[]
+}
+
+/**
+ * Normalize Yahoo chart arrays into OHLCV bars.
+ *
+ * Yahoo returns per-field `null` on partial bars (halts, gaps, missing data).
+ * The previous `close ?? 0` / `high ?? 0` normalization kept a bar whose close
+ * was valid but whose high/low were null as `high=0, low=0` — which poisons
+ * downstream math: sr.ts records a phantom pivot low at price 0, and
+ * structure.ts's ATR sees a huge true range (|0 − prevClose|). Here we drop any
+ * bar with no usable close, and backfill a missing or non-positive open/high/low
+ * from the close (a doji bar), so high/low stay sane while the close series —
+ * the only thing MAs read — is preserved.
+ */
+export function normalizeYahooBars(
+  timestamp: number[],
+  quote: YahooQuoteArrays,
+  days: number
+): OHLCV[] {
+  const bars: OHLCV[] = []
+  for (let i = 0; i < timestamp.length; i++) {
+    const close = quote.close[i]
+    if (close == null || close <= 0) continue   // no usable close → unusable bar
+    const pos = (v: number | null | undefined) => (v != null && v > 0 ? v : close)
+    bars.push({
+      date:   new Date(timestamp[i] * 1000).toISOString().slice(0, 10),
+      open:   pos(quote.open[i]),
+      high:   pos(quote.high[i]),
+      low:    pos(quote.low[i]),
+      close,
+      volume: quote.volume[i] ?? 0,
+    })
+  }
+  return bars.slice(-days)
+}
+
 function daysToRange(days: number): string {
   if (days <= 5)   return "5d"
   if (days <= 30)  return "1mo"
@@ -140,17 +182,7 @@ export class YahooFinanceAdapter implements MarketAdapter {
     const { timestamp, indicators } = result
     const quote = indicators.quote[0]
 
-    return timestamp
-      .map((ts, i) => ({
-        date:   new Date(ts * 1000).toISOString().slice(0, 10),
-        open:   quote.open[i]   ?? 0,
-        high:   quote.high[i]   ?? 0,
-        low:    quote.low[i]    ?? 0,
-        close:  quote.close[i]  ?? 0,
-        volume: quote.volume[i] ?? 0,
-      }))
-      .filter(b => b.close > 0)   // drop null bars (holidays, missing data)
-      .slice(-days)                // trim to requested days
+    return normalizeYahooBars(timestamp, quote, days)
   }
 }
 

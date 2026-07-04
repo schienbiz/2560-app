@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.3] — 2026-07-03
+
+### Fixed
+- **Interactive/live surfaces now suppress signals on thin history**: the chart, scan, WebSocket,
+  and AI-analysis routes computed a signal even when there weren't enough bars for the slow MA to
+  settle. Combined with the cache returning as few as `min(days, 60)` rows, a large `slow_period`
+  on a thinly-cached or freshly-listed symbol could show a phantom cross off the just-initialized
+  MA. All four now gate on a shared `hasSufficientBars(barCount, slowPeriod)` (`slow_period + 5`)
+  and return `signal: none` + `insufficient_history: true` instead. The cron scan, backtest, and
+  morning-summary already had this guard inline; they now share the same helper so the rule lives
+  in one place.
+- **Yahoo partial bars no longer corrupt high/low**: `normalizeYahooBars` used `high ?? 0` /
+  `low ?? 0`, so a bar with a valid close but null high/low was kept as `high=0, low=0`. That put
+  a phantom support level at price 0 (`sr.ts`) and blew up ATR (`structure.ts`). Bars with no
+  usable close are now dropped, and a missing or non-positive open/high/low is backfilled from the
+  close (a doji), keeping the close series intact for MAs while fixing the downstream math.
+
 ## [1.3.2] — 2026-07-03
 
 ### Added

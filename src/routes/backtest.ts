@@ -12,6 +12,7 @@ import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
 import { getOrFetchOHLCV } from "../utils/ohlcv.js"
 import { runBacktest } from "../engine/backtest.js"
+import { hasSufficientBars } from "../engine/signal.js"
 
 export const backtestRouter = new Hono()
 
@@ -26,7 +27,7 @@ backtestRouter.get("/:symbol", async c => {
     const assetType = adapter.getAssetType()
     const ohlcv     = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
 
-    if (ohlcv.length < slowPeriod + 5) {
+    if (!hasSufficientBars(ohlcv.length, slowPeriod)) {
       return c.json({ error: `資料不足（MA${slowPeriod} 需要至少 ${slowPeriod + 5} 根 K 線）` }, 400)
     }
 

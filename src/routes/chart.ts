@@ -13,7 +13,7 @@ import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { computeMA } from "../engine/index.js"
-import { scoreSignal } from "../engine/signal.js"
+import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { computeSR } from "../engine/sr.js"
 import { computeStructure } from "../engine/structure.js"
 import type { ChartData } from "../engine/types.js"
@@ -46,6 +46,12 @@ chartRouter.get("/chart/:symbol", async c => {
     // avoids the redundant MA recomputation inside analyzeSymbol)
     const result = scoreSignal(ohlcv, ma25, ma60)
 
+    // Thin history (e.g. a cache under-provisioned for a large slow_period, or a
+    // freshly-listed symbol) can't produce a trustworthy slow-MA cross — suppress
+    // the signal and flag it rather than showing a phantom cross off the just-
+    // initialized MA.
+    const enough = hasSufficientBars(ohlcv.length, slowPeriod)
+
     const sr      = computeSR(ohlcv)
     const struct  = computeStructure(ohlcv, ma25, ma60)
 
@@ -55,13 +61,14 @@ chartRouter.get("/chart/:symbol", async c => {
       ohlcv,
       ma25,
       ma60,
-      signal:      result.signal,
-      confidence:  result.confidence,
-      signal_date: result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
+      signal:      enough ? result.signal : "none",
+      confidence:  enough ? result.confidence : "low",
+      signal_date: enough && result.crossIndex !== null ? ohlcv[result.crossIndex]?.date ?? null : null,
       support:     sr.support,
       resistance:  sr.resistance,
       rsi:         result.rsi,
       macdHist:    result.macdHist,
+      insufficient_history: !enough,
     }
 
     return c.json({ ...data, swings: struct.swings })
