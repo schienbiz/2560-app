@@ -269,54 +269,6 @@ hook to exist.
 
 ---
 
-## cache.ts isStale freezes an intraday bar until next 08:00 UTC
-
-**What:** In `src/cache.ts` `isStale`, a stock bar fetched during market hours is kept fresh
-until `08:00 UTC the next day`. So today's last bar — which may be a mid-session price when
-the fetch happened during trading — is served unchanged through the real close and until the
-next morning. The MA25/MA60 last point is then computed off an intraday value, not the settled
-daily close, until the cache rolls over.
-
-**Why:** The 2560 strategy is a daily-close strategy. If a user opens the chart at 1pm ET, the
-last bar caches the 1pm price; after the 4pm close the cache still serves the 1pm value until
-8am UTC tomorrow. Cross detection on the last bar can therefore differ from the real EOD result.
-The nightly cron scan runs after close so its writes are correct; this only skews on-demand
-reads (chart / ws / ai) made during or shortly after market hours.
-
-**Pros:** Last MA point reflects the true daily close, not a stale intraday snapshot.
-**Cons:** More refetches (can't cache the in-progress bar for the whole day). Needs a "is this
-bar for today and is the market still open / just closed" check, which is timezone-per-exchange.
-
-**Context:** Found during the 2026-07-03 極致優化 precision audit. Confirmed by reading
-`cache.ts:18-22`. Lower priority than a wrong signal because the nightly scan (the alerting
-path) is unaffected — only the interactive display drifts intraday.
-
-**Depends on:** Per-exchange market-hours awareness (TW 13:30, US 16:00 local). Independent.
-
----
-
-## Crypto: last daily candle is the in-progress UTC day (provisional cross)
-
-**What:** `src/adapters/binance.ts` (Kraken) returns the current, not-yet-closed UTC-day candle
-as the last OHLC row. So the last MA point for crypto updates live, and a golden/death cross on
-the latest bar is provisional until 00:00 UTC settles the day.
-
-**Why:** A crypto cross shown midday can disappear by day close if price reverts. For a daily
-strategy this is a real "is this signal final?" ambiguity. The nightly scan catches whatever
-value is current at its scheduled run, which may not be the settled close.
-
-**Pros:** Signals only fire on settled daily closes → no intraday flip-flop.
-**Cons:** Requires dropping or specially-marking the in-progress candle, and choosing a scan
-time aligned to 00:00 UTC. Trades immediacy for finality — arguably the current live behavior
-is what an active crypto trader wants.
-
-**Context:** Found during the 2026-07-03 precision audit (`binance.ts:86-97`). Inherent to using
-Kraken's live candle, not a bug. Decide the intended semantics (settled vs live) before changing.
-
-**Depends on:** A product decision on settled-close vs live-candle crypto signals.
-
----
-
 ## TW live quote (TWSE) and history (Yahoo) come from different sources
 
 **What:** For Taiwan stocks, the real-time price uses TWSE (`yahoo.ts:_twseQuote`) while the
@@ -333,12 +285,34 @@ looks like a bug even though both are individually correct. Cross detection itse
 from TWSE or accepting Yahoo for the live price too (losing the broker-grade real-time quote).
 
 **Context:** Found during the 2026-07-03 precision audit. Cosmetic; lowest priority of the batch.
+Reviewed again 2026-07-05 (#5 of the precision batch): confirmed display-only — no signal path
+touches the live quote — so deliberately NOT fixed. Kept as a documented known behavior.
 
 **Depends on:** Nothing hard. Revisit if users report price/MA mismatch confusion.
 
 ---
 
 ## Completed
+
+### Precision: settled-only daily bars (crypto) + intraday cache TTL (stock)
+**Completed:** v1.3.4 (2026-07-05)
+
+Batch items #3 and #4 from the 2026-07-03/05 precision audit.
+- **#4 crypto in-progress candle**: `normalizeKrakenBars` (`binance.ts`) now drops any candle
+  past Kraken's `result.last` (the last *committed* candle marker), so MA/cross detection use
+  settled UTC-day closes only. Confirmed via live Kraken: the 01:00 UTC crypto scan had been
+  evaluating a ~1-hour-old forming candle. Chart shows settled candles + live price overlay.
+- **#3 stock intraday cache freeze**: `isCacheStale` (`cache.ts`) gives a today-dated stock bar
+  a 30-minute TTL instead of freezing it until 08:00 UTC next day, so interactive reads during
+  market hours refresh the forming bar. Settled past days keep the overnight buffer.
+Tested: `kraken-normalize` (4) + `cache-stale` (6).
+
+### Precision: thin-history signal guard + Yahoo partial-bar backfill
+**Completed:** v1.3.3 (2026-07-03)
+
+Batch items #1 and #2. `hasSufficientBars` gate on chart/scan/ws/ai (no phantom cross on
+under-provisioned cache); `normalizeYahooBars` backfills null/non-positive OHLC from close
+(no phantom-0 support / ATR spike). See CHANGELOG v1.3.3.
 
 ### Configurable proximity threshold per-symbol
 **Completed:** v1.2.0 (2026-04-26)

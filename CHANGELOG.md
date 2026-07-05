@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.4] — 2026-07-05
+
+### Fixed
+- **Crypto crosses now fire on settled daily closes, not the forming candle**: Kraken returns the
+  current, not-yet-closed UTC-day candle as the last OHLC row. The daily crypto scan (01:00 UTC)
+  was detecting crosses on a candle barely an hour old (~⅓ of a day's volume), and the chart's
+  last MA point jittered intraday. `normalizeKrakenBars` now drops any candle past Kraken's own
+  `result.last` (last-committed marker), so MA and cross detection see settled closes only. The
+  live price is still shown via the quote overlay. Verified against live Kraken data.
+- **Stock chart no longer freezes an intraday price for hours**: `isCacheStale` kept a stock bar
+  dated *today* fresh until 08:00 UTC the next day, so a chart opened mid-session pinned that
+  moment's price as the last MA point through the real close. Today-dated stock bars now get a
+  30-minute TTL (settled past days keep the overnight buffer), so interactive reads refresh the
+  forming bar. The nightly scan was already correct (it runs post-close).
+
 ## [1.3.3] — 2026-07-03
 
 ### Fixed

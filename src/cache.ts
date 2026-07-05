@@ -10,12 +10,33 @@
 import { db } from "./db.js"
 import type { OHLCV, AssetType } from "./engine/types.js"
 
-function isStale(fetchedAt: Date, assetType: AssetType): boolean {
-  const now = Date.now()
+/**
+ * Is the cached series stale?
+ *
+ * `latestBarDate` is the date of the newest cached bar; `fetchedAt` is when it
+ * was written. Pure (inject `now` for tests).
+ *
+ * Stock nuance: a bar dated *today* is still forming during market hours. The
+ * old rule ("fresh until 08:00 UTC next day") froze an intraday snapshot for up
+ * to ~14 hours, so an on-demand chart opened mid-session kept a mid-day price as
+ * the last MA point through the real close. Today-dated stock bars now get a
+ * 30-minute TTL so interactive reads refresh; settled past days keep the long
+ * overnight buffer.
+ */
+export function isCacheStale(
+  latestBarDate: Date,
+  fetchedAt: Date,
+  assetType: AssetType,
+  now: number = Date.now()
+): boolean {
   if (assetType === "crypto") {
     return now - fetchedAt.getTime() > 15 * 60 * 1000   // 15 min
   }
-  // Stock: stale after 8am UTC next day (gives overnight buffer for after-hours data)
+  const todayUTC = new Date(now).toISOString().slice(0, 10)
+  if (latestBarDate.toISOString().slice(0, 10) === todayUTC) {
+    return now - fetchedAt.getTime() > 30 * 60 * 1000    // forming bar → short TTL
+  }
+  // Settled past day: fresh until 08:00 UTC the day after it was fetched.
   const nextDayClose = new Date(fetchedAt)
   nextDayClose.setUTCDate(nextDayClose.getUTCDate() + 1)
   nextDayClose.setUTCHours(8, 0, 0, 0)
@@ -36,7 +57,7 @@ export async function getCachedOHLCV(
   if (rows.length === 0) return null
 
   const latest = rows[rows.length - 1]
-  if (isStale(latest.fetched_at, assetType)) return null
+  if (isCacheStale(latest.date, latest.fetched_at, assetType)) return null
   if (rows.length < Math.min(days, 60)) return null   // not enough history
 
   return rows.slice(-days).map(r => ({
