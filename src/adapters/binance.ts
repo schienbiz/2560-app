@@ -44,6 +44,35 @@ function toKrakenPair(symbol: string): string {
   return PAIR_MAP[upper] ?? upper
 }
 
+/**
+ * Normalize Kraken OHLC rows into settled daily bars.
+ *
+ * Kraken returns the current, not-yet-closed UTC-day candle as the last row, and
+ * separately reports `result.last` — the timestamp of the last *committed*
+ * candle. A daily-close strategy must not detect a cross on a candle that is
+ * still forming (at the 01:00 UTC crypto scan the last row is barely an hour old,
+ * with ~1/3 volume). Drop any row past `lastCommitted` so MA/cross see settled
+ * closes only; the live price is shown separately via fetchQuote.
+ */
+export function normalizeKrakenBars(
+  rows: KrakenOHLCRow[],
+  lastCommitted: number,
+  days: number
+): OHLCV[] {
+  return rows
+    .filter(k => k[0] <= lastCommitted)   // drop the in-progress (uncommitted) candle
+    .map(k => ({
+      date:   new Date(k[0] * 1000).toISOString().slice(0, 10),
+      open:   parseFloat(k[1]),
+      high:   parseFloat(k[2]),
+      low:    parseFloat(k[3]),
+      close:  parseFloat(k[4]),
+      volume: parseFloat(k[6]),
+    }))
+    .filter(b => b.close > 0)
+    .slice(-days)
+}
+
 export class BinanceAdapter implements MarketAdapter {
   getAssetType() { return "crypto" as const }
 
@@ -84,22 +113,15 @@ export class BinanceAdapter implements MarketAdapter {
     if (!resultKey) throw new Error(`No data for symbol: ${symbol}`)
 
     const rows = json.result[resultKey] as KrakenOHLCRow[]
-    return rows
-      .map(k => ({
-        date:   new Date(k[0] * 1000).toISOString().slice(0, 10),
-        open:   parseFloat(k[1]),
-        high:   parseFloat(k[2]),
-        low:    parseFloat(k[3]),
-        close:  parseFloat(k[4]),
-        volume: parseFloat(k[6]),
-      }))
-      .filter(b => b.close > 0)
-      .slice(-days)
+    // `result.last` = timestamp of the last committed candle; anything past it is
+    // the in-progress day. Missing → keep all (fail open).
+    const lastCommitted = typeof json.result.last === "number" ? json.result.last : Infinity
+    return normalizeKrakenBars(rows, lastCommitted, days)
   }
 }
 
 // [time, open, high, low, close, vwap, volume, count]
-type KrakenOHLCRow = [number, string, string, string, string, string, string, number]
+export type KrakenOHLCRow = [number, string, string, string, string, string, string, number]
 
 interface KrakenResponse {
   error: string[]
