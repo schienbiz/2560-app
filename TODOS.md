@@ -245,27 +245,26 @@ intended semantics before changing.
 
 ---
 
-## Standby Render backend: set RENDER_HOOK_SCHIENBIZ secret
+## Standby Render backend: RENDER_HOOK_SCHIENBIZ hook is optional (not needed for sync)
 
-**What:** Set the `RENDER_HOOK_SCHIENBIZ` GitHub Actions secret (the `two560-app` /
-schienbiz service's Render Deploy Hook URL) so `deploy-sync.yml` redeploys the standby
-backend on every push to `main`, keeping the "alternating complement" standby current.
+**What:** Optionally set the `RENDER_HOOK_SCHIENBIZ` GitHub Actions secret (the `two560-app` /
+schienbiz Render Deploy Hook URL) so `deploy-sync.yml` also pings the standby on each push to
+`main`. Currently unset → the workflow's schienbiz step skips gracefully.
 
-**Why:** `deploy-sync.yml` already fires the primary hook (`RENDER_HOOK_ATUNGC2020`,
-verified triggering on the v1.3.2 deploy). The schienbiz step is coded but the secret is
-unset, so it silently skips — the workflow comment noted "7/1 前可不設", and that date has
-now passed (today is 2026-07-03). Until it's set, the standby can drift behind the primary
-and won't be a clean failover.
+**Why it's optional (corrected 2026-07-05):** the original assumption here — "the standby drifts
+behind until the hook is set" — is wrong. schienbiz has **native GitHub auto-deploy**, so it
+tracks `main` on its own. Verified 2026-07-05 right after PR #12: `two560-app.onrender.com/health`
+returned `1.3.4 @ 3e4ab1a`, identical to the primary, with the hook still unset. The hook would
+only be redundant "double insurance" if native auto-deploy ever failed or got disabled. Per
+`deploy-sync.yml`'s own comment: only atungc2020 (a public-repo fork with no auto-deploy) *needs*
+its hook; schienbiz's is belt-and-suspenders.
 
-**Pros:** True hot standby — both backends always run the same commit. Faster failover if
-the primary suspends.
-**Cons:** None beyond one-time secret setup. schienbiz must be un-suspended first for the
-hook to exist.
+**Decision (2026-07-05):** left unset by choice — native auto-deploy keeps the standby current.
+Revisit only if the standby is ever observed lagging the primary's `/health` sha.
 
-**Context:** Observed during the 2026-07-02 deploy of v1.3.2: the deploy-sync log printed
-"RENDER_HOOK_SCHIENBIZ 未設定，略過（7/1 前可不設）". Operational, not product.
-
-**Depends on:** schienbiz Render service being live so it has a Deploy Hook URL to copy.
+**How, if ever wanted:** copy the Deploy Hook URL from Render (two560-app → Settings → Deploy
+Hook) and `gh secret set RENDER_HOOK_SCHIENBIZ --body '<url>'`. It's a capability URL — keep it
+out of chat/logs.
 
 ---
 
