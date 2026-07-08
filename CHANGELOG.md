@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.4.0] — 2026-07-08
+
+### Added
+- **強確認死叉 (5-factor strong-confirmation death cross)**: death-cross notifications now carry a
+  confirmation score checking five bearish factors at the cross bar — Vegas tunnel bearish
+  alignment (EMA144 < EMA169), MACD histogram < 0, slow-MA 5-bar slope down, RSI(14) in 35–50,
+  and the market index (BTC for crypto, SPY for US, 0050.TW for TW/HK) at or below its MA200.
+  All five pass → `⚡ 強確認死叉 5/5`; otherwise `死叉確認 X/5` with the failed factors listed,
+  and missing history reported as 資料不足 rather than counted as a failure (fail-closed: a cross
+  can only be "strong" when all five factors are computable and pass). The 83% precision claim
+  is only shown for alerts on the backtested MA25/60 pair — custom-period alerts get the
+  confirmation count without the unvalidated statistic. Golden crosses are deliberately left
+  unfiltered — backtests show their value is in return magnitude, not directional precision.
+  - Evidence (16 symbols × ~9y daily, 577 crosses, time-split validated train <2024 / test ≥2024):
+    5/5-confirmed death crosses showed ~83% 5-day precision (n=23) vs 52% for all death crosses;
+    precision rises monotonically with factor count (36→47→40→62→66→83%), ≥4 factors held 78%
+    in the out-of-sample period. Small n — treat as strong evidence, not a guarantee.
+  - Implementation: pure scoring in `src/engine/strong-death.ts`; fetch orchestration in
+    `src/utils/strong-death.ts` pulls ~2 years of deep history lazily, only on the bar where a
+    death cross actually fires — deep enough that EMA169 is converged like the backtest's (at
+    ~250 bars the EMA seed still carries ~38% of the value), reading the DB cache directly (the
+    shared in-process OHLCV cache would serve/memorize shallow 90-day windows and the deep
+    factors would silently never compute) with adapter fallback, deduped through a promise memo
+    so a symbol that is also the market index (BTC/SPY/0050) shares one fetch. All series are
+    date-aligned to the cross bar: factors are never scored on yesterday's close, and a market
+    index lagging the cross bar (e.g. an HK cross on a TW holiday) degrades to 資料不足 instead
+    of silently using a stale close. Runs concurrently with the AI insight call, and any data
+    failure degrades to the plain notification (never blocks it).
+
+### Fixed
+- **Taiwan-market crosses can no longer be silently dropped by the cache freshness window**:
+  the settled-day OHLCV cache rule ("fresh until 08:00 UTC the day after fetch") outlived the
+  06:00 UTC scan-tw schedule, so a series fetched by yesterday's scan was still served to
+  today's scan — the scan scored yesterday's bars, and because cross detection only fires on
+  the last bar transition, a cross landing on today's bar was permanently missed once the next
+  day's refetch moved past it. The horizon (DB cache and the in-process mirror) is now the NEXT
+  05:30 UTC after the fetch, expiring just before the earliest daily scan; overnight consumers
+  (morning summary 00:00 UTC, reminders 00:30 UTC) keep riding the buffer. Regression-tested
+  against the exact scan-timing scenario.
+
 ## [1.3.4] — 2026-07-05
 
 ### Fixed

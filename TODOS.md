@@ -291,6 +291,54 @@ touches the live quote — so deliberately NOT fixed. Kept as a documented known
 
 ---
 
+## HK symbols are scanned on a forming intraday bar
+
+**What:** `scan-tw.yml` fires at 06:00 UTC (14:00 HKT) but HKEX trades until 16:00 HKT, and the
+Yahoo adapter keeps the in-progress bar (unlike Kraken, which drops uncommitted candles). So for
+`.HK` symbols, cross detection AND the new strong-death factor scoring run against a bar that is
+still forming — the 「settled closes」 contract holds for TW (closed 13:30 local) and crypto, but
+not HK.
+
+**Why:** A cross detected at 14:00 HKT can un-cross by the 16:00 close; the notification is
+already sent. Pre-existing behavior for cross detection (not introduced by the strong-death
+feature), inherited by the 5-factor scoring.
+
+Related: the strong-death market-regime factor judges `.HK` symbols against 0050.TW (the "tw"
+bucket index), but HK stocks track HSI, not Taiwan. A date mismatch (HK trading on a TW
+holiday) now safely degrades to 資料不足, but on normal days the factor reflects the wrong
+market. If `.HK` symbols become a real use case, add `^HSI` (Yahoo) as the hk bucket index.
+
+**Fix sketch:** Either move `.HK` to a post-08:00-UTC schedule (separate cron or fold into
+scan-us pre-market), or drop a today-dated `.HK` bar at scan time when the scan runs before
+08:00 UTC.
+
+**Priority:** P2 — only matters if `.HK` symbols are actually on the watchlist.
+
+**Context:** Found by red-team review during v1.4.0 ship (2026-07-08).
+
+---
+
+## Scan curl --max-time headroom on heavy death-cross days
+
+**What:** `/internal/scan` responds only after the full scan completes, and the GitHub Actions
+curl uses `--max-time 90`. The strong-death evaluation adds deep fetches + up to 32 sequential
+Neon upsert batches per unique symbol/index on exactly the days with many simultaneous death
+crosses (market crashes). If total scan time crosses 90s, the workflow fires a false 「後端可能
+掛了」 Telegram alert even though the scan finishes server-side.
+
+**Why:** False alarms on crash days erode trust in the dead-man alert. Mitigated substantially by
+the promise memo (one index fetch per market bucket per scan) but not eliminated.
+
+**Fix sketch:** Raise `--max-time` to 240 (cheap), or make `/internal/scan` respond 202 and push
+a completion heartbeat (proper, but changes the dead-man semantics — see monitoring lessons in
+memory before touching this).
+
+**Priority:** P2 — no observed occurrence yet; revisit if the workflow starts flapping.
+
+**Context:** Found by red-team review during v1.4.0 ship (2026-07-08).
+
+---
+
 ## Completed
 
 ### Precision: settled-only daily bars (crypto) + intraday cache TTL (stock)
