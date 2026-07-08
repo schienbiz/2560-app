@@ -22,6 +22,15 @@ import type { OHLCV, AssetType } from "./engine/types.js"
  * the last MA point through the real close. Today-dated stock bars now get a
  * 30-minute TTL so interactive reads refresh; settled past days keep the long
  * overnight buffer.
+ *
+ * The settled-day horizon must expire BEFORE the earliest daily scan (scan-tw
+ * at 06:00 UTC, minutes after the 05:30 UTC TWSE close). With the previous
+ * 08:00 UTC horizon, a series fetched by yesterday's 06:00 scan was still
+ * "fresh" at today's 06:00 scan — the scan scored yesterday's bars, and since
+ * detectCross only fires on the last bar transition, a cross landing on
+ * today's bar was never detected once tomorrow's refetch moved past it.
+ * 05:30 UTC keeps every overnight consumer (morning summary 00:00, remind
+ * 00:30) on the buffer while guaranteeing each scan sees that day's close.
  */
 export function isCacheStale(
   latestBarDate: Date,
@@ -36,11 +45,15 @@ export function isCacheStale(
   if (latestBarDate.toISOString().slice(0, 10) === todayUTC) {
     return now - fetchedAt.getTime() > 30 * 60 * 1000    // forming bar → short TTL
   }
-  // Settled past day: fresh until 08:00 UTC the day after it was fetched.
-  const nextDayClose = new Date(fetchedAt)
-  nextDayClose.setUTCDate(nextDayClose.getUTCDate() + 1)
-  nextDayClose.setUTCHours(8, 0, 0, 0)
-  return now > nextDayClose.getTime()
+  // Settled past day: fresh until the NEXT 05:30 UTC after the fetch — just
+  // before scan-tw (06:00 UTC), the earliest daily scan. "Next" (not "the day
+  // after"): a fetch landing between 00:00 and 05:30 (morning summary/remind
+  // cold start) must expire at the SAME day's 05:30, or the 06:00 scan would
+  // be served yesterday's series and the day's cross silently dropped.
+  const cutoff = new Date(fetchedAt)
+  cutoff.setUTCHours(5, 30, 0, 0)
+  if (cutoff.getTime() <= fetchedAt.getTime()) cutoff.setUTCDate(cutoff.getUTCDate() + 1)
+  return now > cutoff.getTime()
 }
 
 export async function getCachedOHLCV(

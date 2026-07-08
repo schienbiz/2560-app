@@ -15,9 +15,12 @@ function _memKey(symbol: string, assetType: AssetType, days: number): string {
 
 function _memTTL(assetType: AssetType): number {
   if (assetType === "crypto") return Date.now() + 15 * 60 * 1_000
+  // Must mirror cache.ts's settled-day horizon: the NEXT 05:30 UTC (before the
+  // 06:00 scan-tw) — an in-process entry outliving the DB rule would feed the
+  // next day's scan yesterday's series and silently swallow that day's cross.
   const exp = new Date()
-  exp.setUTCDate(exp.getUTCDate() + 1)
-  exp.setUTCHours(8, 0, 0, 0)
+  exp.setUTCHours(5, 30, 0, 0)
+  if (exp.getTime() <= Date.now()) exp.setUTCDate(exp.getUTCDate() + 1)
   return exp.getTime()
 }
 
