@@ -13,8 +13,10 @@
 
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
-import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
+import { computeMA, scoreSignal, hasSufficientBars, formatStrongDeathLine, FACTOR_COUNT } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
+import { evaluateStrongDeath } from "../src/utils/strong-death.js"
+import type { MarketBucket } from "../src/utils/strong-death.js"
 import { notifyInsight } from "../src/services/ai.js"
 import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
 import type { SentimentResult } from "../src/services/news.js"
@@ -25,12 +27,14 @@ import type { OHLCV, AssetType } from "../src/engine/types.js"
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
 const APP_URL        = process.env.APP_URL ?? "https://two560-app.onrender.com"
 
-type Market = "tw" | "us" | "crypto"
+type Market = MarketBucket
 
 // Classify a symbol into tw / us / crypto based on asset_type and symbol pattern.
 // TW = Taiwan stocks (.TW, .TWO) or 4-digit shorthand (e.g. "2330")
 // HK-listed stocks (.HK) trade same timezone as TW → treated as "tw" bucket
-function getMarket(assetType: string, symbol: string): Market {
+// Exported for tests — the bucket decides which market index (BTC/SPY/0050)
+// the strong-death regime factor is judged against.
+export function getMarket(assetType: string, symbol: string): Market {
   if (assetType === "crypto") return "crypto"
   if (/\.(TWO?|HK)$/i.test(symbol) || /^\d{4}$/.test(symbol)) return "tw"
   return "us"
@@ -166,7 +170,17 @@ export async function runScan(markets?: Market[]) {
               sentiment = scoreFearGreed(fearGreed, signal)
             }
 
-            const insight = await notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment)
+            // Strong-death evaluation runs concurrently with the AI insight call
+            const [insight, strongDeath] = await Promise.all([
+              notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment),
+              signal === "death_cross"
+                ? evaluateStrongDeath(normalizedSymbol, assetType, slowPeriod, getMarket(assetType, normalizedSymbol), latest.date)
+                : Promise.resolve(null),
+            ])
+            // 83% precision claim only for the backtested MA25/60 configuration
+            const strongLine = strongDeath
+              ? formatStrongDeathLine(strongDeath, fastPeriod === 25 && slowPeriod === 60)
+              : null
 
             // RSI + MACD summary line
             const rsiStr  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
@@ -180,6 +194,7 @@ export async function runScan(markets?: Market[]) {
 
             const msg = [
               `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
+              strongLine,
               `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${latest.close}`,
               indLine,
               sentLine,
@@ -204,7 +219,7 @@ export async function runScan(markets?: Market[]) {
               update: {},
             })
 
-            console.log(`  ✓ ${normalizedSymbol} → ${signal}`)
+            console.log(`  ✓ ${normalizedSymbol} → ${signal}${strongDeath ? ` (死叉確認 ${strongDeath.passed}/${FACTOR_COUNT}${strongDeath.isStrong ? " ⚡強確認" : ""})` : ""}`)
           }
         }
       }
