@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 
 // Mock the data layer before importing the module under test.
 const getCachedOHLCV = vi.fn()
-const upsertOHLCV = vi.fn()
+const bulkInsertOHLCV = vi.fn()
 const adapterFetch = vi.fn()
 
 vi.mock("../src/cache.js", () => ({
   getCachedOHLCV: (...args: unknown[]) => getCachedOHLCV(...args),
-  upsertOHLCV: (...args: unknown[]) => upsertOHLCV(...args),
+  bulkInsertOHLCV: (...args: unknown[]) => bulkInsertOHLCV(...args),
 }))
 vi.mock("../src/adapters/index.js", () => ({
   getAdapter: (symbol: string) => ({
@@ -36,8 +36,8 @@ beforeEach(() => {
   clearDeepMemo()
   getCachedOHLCV.mockReset()
   adapterFetch.mockReset()
-  upsertOHLCV.mockReset()
-  upsertOHLCV.mockResolvedValue(undefined)
+  bulkInsertOHLCV.mockReset()
+  bulkInsertOHLCV.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -77,7 +77,7 @@ describe("fetchDeepBars", () => {
     const out = await fetchDeepBars("ETHUSDT", "crypto", asOf)
     expect(out).toHaveLength(N)
     expect(adapterFetch).toHaveBeenCalledWith("ETHUSDT", "ETHUSDT", DEEP_DAYS)
-    expect(upsertOHLCV).toHaveBeenCalledOnce()   // deep bars written back to cache
+    expect(bulkInsertOHLCV).toHaveBeenCalledOnce()   // deep bars written back to cache
   })
 
   it("falls back to the adapter when the DB cache is deep but STALE (missing the cross bar)", async () => {
@@ -101,7 +101,7 @@ describe("fetchDeepBars", () => {
   it("still returns deep bars when the cache write-back fails", async () => {
     getCachedOHLCV.mockResolvedValue(null)
     adapterFetch.mockResolvedValue(bars(N))
-    upsertOHLCV.mockRejectedValueOnce(new Error("db down"))
+    bulkInsertOHLCV.mockRejectedValueOnce(new Error("db down"))
     const out = await fetchDeepBars("ETHUSDT", "crypto", asOf)
     expect(out).toHaveLength(N)
   })

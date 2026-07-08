@@ -20,7 +20,7 @@
  */
 
 import { getAdapter } from "../adapters/index.js"
-import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
+import { getCachedOHLCV, bulkInsertOHLCV } from "../cache.js"
 import { scoreStrongDeath } from "../engine/index.js"
 import type { StrongDeathResult } from "../engine/index.js"
 import type { OHLCV, AssetType } from "../engine/types.js"
@@ -61,7 +61,10 @@ async function fetchDeepBarsUncached(symbol: string, assetType: AssetType, asOf:
 
   const { adapter } = getAdapter(symbol)
   const bars = await adapter.fetchOHLCV(symbol, DEEP_DAYS)
-  if (bars.length > 0) await upsertOHLCV(symbol, assetType, bars).catch(() => {})
+  // Single-statement backfill: the ~500-bar upsert chain took minutes at WAN
+  // latency (measured against production Neon) and would stall the scan's
+  // notification path on cross-region deploys.
+  if (bars.length > 0) await bulkInsertOHLCV(symbol, assetType, bars).catch(() => {})
   return bars
 }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.4.1] — 2026-07-09
+
+### Fixed
+- **Deep-history write-back no longer stalls the scan**: post-deploy audit dry-ran today's real
+  death cross (2308.TW) through the production path and caught the strong-death cache write-back
+  taking minutes — `upsertOHLCV` issues one round trip per bar (~500 sequential queries for a
+  2-year series), measured 75× slower than a single bulk statement against production Neon. Deep
+  backfill now uses `bulkInsertOHLCV` (one `createMany … skipDuplicates`); historical bars are
+  immutable so insert-or-skip semantics are exact, and the shallow scan path keeps refreshing the
+  newest bars via upsert. Without this, a multi-death-cross day could delay notifications by
+  minutes per symbol and trip the workflow dead-man alert.
+
 ## [1.4.0] — 2026-07-08
 
 ### Added

@@ -83,6 +83,30 @@ export async function getCachedOHLCV(
   }))
 }
 
+/**
+ * Bulk-insert bars in a single statement, skipping rows that already exist.
+ *
+ * For deep-history backfill (strong-death's ~500-bar series) the upsert chain
+ * below is pathological: ~500 sequential round trips ≈ minutes at WAN latency
+ * and tens of seconds cross-region, measured 75× slower than one createMany.
+ * Historical bars are immutable so insert-or-skip semantics are correct; the
+ * shallow scan path keeps using upsertOHLCV to refresh the newest bars.
+ */
+export async function bulkInsertOHLCV(
+  symbol: string,
+  source: string,
+  bars: OHLCV[]
+): Promise<void> {
+  if (bars.length === 0) return
+  await db.ohlcvCache.createMany({
+    data: bars.map(b => ({
+      symbol, source, date: new Date(b.date),
+      open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
+    })),
+    skipDuplicates: true,
+  })
+}
+
 const UPSERT_BATCH = 20
 
 export async function upsertOHLCV(
