@@ -13,7 +13,7 @@
  *   GROQ_API_KEY
  */
 
-import { createHmac } from "crypto"
+import { createHmac, timingSafeEqual } from "crypto"
 import type { Context } from "hono"
 import { chatWithContext } from "../services/ai.js"
 import { getUserContext } from "../services/bot-context.js"
@@ -35,7 +35,8 @@ function verifySignature(body: string, signature: string): boolean {
   const secret = process.env.LINE_CHANNEL_SECRET
   if (!secret) return false
   const expected = createHmac("sha256", secret).update(body).digest("base64")
-  return expected === signature
+  const exp = Buffer.from(expected), sig = Buffer.from(signature)
+  return exp.length === sig.length && timingSafeEqual(exp, sig)  // constant-time
 }
 
 // ─── Reply via LINE Messaging API ─────────────────────────────────────────────

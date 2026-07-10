@@ -1,5 +1,6 @@
 import { Hono } from "hono"
 import { readFileSync } from "node:fs"
+import { timingSafeEqual } from "node:crypto"
 import { serveStatic } from "@hono/node-server/serve-static"
 import { chartRouter }     from "./routes/chart.js"
 import { watchlistRouter } from "./routes/watchlist.js"
@@ -48,10 +49,17 @@ app.route("/api/backtest",  backtestRouter)
 app.post("/webhook/line",     c => handleLineWebhook(c))
 app.post("/webhook/telegram", c => handleTelegramWebhook(c))
 
+// Constant-time secret comparison — avoids a timing side-channel on the internal-cron guard.
+function secretMatches(provided: string | undefined, expected: string | undefined): boolean {
+  if (!provided || !expected) return false
+  const a = Buffer.from(provided), b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
 // ─── Internal cron endpoints (guarded by INTERNAL_SECRET header) ─────────────
 app.post("/internal/scan", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+  if (!secretMatches(secret, process.env.INTERNAL_SECRET)) {
     return c.json({ error: "Forbidden" }, 403)
   }
   const marketParam = c.req.query("market")
@@ -63,7 +71,7 @@ app.post("/internal/scan", async c => {
 
 app.post("/internal/remind", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+  if (!secretMatches(secret, process.env.INTERNAL_SECRET)) {
     return c.json({ error: "Forbidden" }, 403)
   }
   const marketParam = c.req.query("market")
@@ -75,7 +83,7 @@ app.post("/internal/remind", async c => {
 
 app.post("/internal/morning-summary", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+  if (!secretMatches(secret, process.env.INTERNAL_SECRET)) {
     return c.json({ error: "Forbidden" }, 403)
   }
   const { runMorningSummary } = await import("../cron/morning-summary.js")
@@ -85,7 +93,7 @@ app.post("/internal/morning-summary", async c => {
 
 app.post("/internal/outcome", async c => {
   const secret = c.req.header("x-internal-secret")
-  if (!secret || !process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+  if (!secretMatches(secret, process.env.INTERNAL_SECRET)) {
     return c.json({ error: "Forbidden" }, 403)
   }
   const { runOutcome } = await import("../cron/outcome.js")

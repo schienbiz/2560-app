@@ -96,9 +96,6 @@ export async function runScan(markets?: Market[]) {
   // ── Pre-fetch 2: Fear & Greed once for all crypto alerts (has 1h in-memory cache) ──
   const fearGreed = await fetchFearGreed().catch(() => null)
 
-  // ── Pre-fetch 3: Taipei date for dedup checks ──
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" })
-
   // ── Process all alerts in parallel ───────────────────────────────────────────────
   await Promise.allSettled(alerts.map(async alert => {
     const { watchlist } = alert
@@ -232,12 +229,14 @@ export async function runScan(markets?: Market[]) {
           const priceDist = Math.abs(latest.close - maFastLast) / maFastLast
 
           if (priceDist <= proximityThreshold) {
-            const today = new Date(todayStr)
-
+            // Dedup on the bar's own (UTC) date — same basis as the signal_date we write,
+            // so it's timezone-independent. The old `gte today(Taipei)` never matched its
+            // own writes for US symbols (scanned at 22:00 UTC = Taipei next day), making
+            // the US proximity dedup a no-op that could re-alert on any same-day re-run.
             const alreadyAlerted = await db.signalHistory.findFirst({
               where: {
                 symbol:      normalizedSymbol,
-                signal_date: { gte: today },
+                signal_date: new Date(latest.date),
                 signal:      "proximity_golden",
               },
             })
@@ -284,8 +283,10 @@ export async function runScan(markets?: Market[]) {
           // ── 3. Zone exit alert ────────────────────────────────────────────────
           // Price has moved >3% away from fast MA after being in the zone
           if (priceDist > EXIT_THRESHOLD) {
-            const threeDaysAgo = new Date(todayStr)
-            threeDaysAgo.setDate(threeDaysAgo.getDate() - 3)
+            // 3-day lookback anchored on the bar's UTC date (same basis as stored
+            // signal_date) → timezone-independent window.
+            const threeDaysAgo = new Date(latest.date)
+            threeDaysAgo.setUTCDate(threeDaysAgo.getUTCDate() - 3)
 
             const recentProximity = await db.signalHistory.findFirst({
               where: {
@@ -296,12 +297,10 @@ export async function runScan(markets?: Market[]) {
             })
 
             if (recentProximity) {
-              const today = new Date(todayStr)
-
               const alreadyExited = await db.signalHistory.findFirst({
                 where: {
                   symbol:      normalizedSymbol,
-                  signal_date: { gte: today },
+                  signal_date: new Date(latest.date),
                   signal:      "proximity_exit",
                 },
               })

@@ -28,6 +28,7 @@ import { db }              from "../db.js"
 import { getAdapter }      from "../adapters/index.js"
 import { chatWithContext } from "../services/ai.js"
 import { getUserContext }  from "../services/bot-context.js"
+import { timingSafeEqual } from "crypto"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,8 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET
   if (webhookSecret) {
     const incoming = c.req.header("X-Telegram-Bot-Api-Secret-Token") ?? ""
-    if (incoming !== webhookSecret) {
+    const a = Buffer.from(incoming), b = Buffer.from(webhookSecret)
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {  // constant-time
       return c.json({ error: "Invalid secret" }, 401)
     }
   }
