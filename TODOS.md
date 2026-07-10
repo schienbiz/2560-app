@@ -339,6 +339,38 @@ memory before touching this).
 
 ---
 
+## First manual A/E pull → Phase 1 (actuarial layer) go/no-go
+
+**What:** Run `npx tsx scripts/ae-report.ts` (read-only, one command) and read it in two passes:
+§1 coverage must be clean (matured crosses all carry 20d outcome + benchmark — if not, fix the
+outcome pipeline before interpreting anything), then §2 hit rates vs the backtested expecteds
+with Wilson lower bounds. Then decide Phase 1 (assumption register as data + quarterly A/E memo
+cron + credibility-blended precision line in notifications, replacing the static 「回測83%」).
+
+**Trigger (whichever comes first):** 2026-10-15, or §1 shows ≥20 matured crosses. Accrual is
+~3–4 crosses/month across the current watchlist, so mid-October ≈ 15–20 matured signals.
+
+**Decision criteria, written down now so October-me doesn't rationalize:**
+- Phase 1 **worth building** if: the manual pull took real effort / got skipped past its trigger
+  date (automation exists to defeat forgetting), OR §2 already shows a tier drifting from its
+  expected (a live calibration consumer exists), OR strong-death 5/5 signals started appearing
+  (the 83% line in notifications is then quoting a number with zero live samples behind it).
+- Phase 1 **not worth building** if: the script takes <5 min quarterly and its numbers don't
+  change any decision — a calendar entry + this script may simply be Phase 1 forever. That is
+  a legitimate outcome, not a failure.
+
+**Why:** Phase 0 (v1.5.0, `c84822c`) made outcomes/benchmarks/strong-tier accrue correctly, but
+n is tiny (9 crosses since 2026-04-23) — tier-level cells need 12–18 months for n≥20, so building
+the memo cron now would automate the reporting of noise. The known failure mode of "wait and
+see" is that nobody comes back (stale-aggregate/彙總標題過期 lesson) — hence the dated trigger,
+the zero-friction script, and criteria fixed in advance.
+
+**Depends on:** outcome pipeline staying healthy while waiting — guarded by `outcome.yml`
+`if: failure()` Telegram alert (4a69ff7) and the audit script's workflow tracking. §1 of the
+report is the backstop check at pull time.
+
+---
+
 ## Completed
 
 ### Precision: settled-only daily bars (crypto) + intraday cache TTL (stock)
