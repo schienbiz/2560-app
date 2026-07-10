@@ -1,31 +1,39 @@
 /**
- * Outcome cron — computes % return at +5/+10/+20 trading days after each signal.
+ * Outcome cron — % return at +5/+10/+20 trading days after each golden/death
+ * cross, plus the market-index (BTC/SPY/0050) return over the same windows.
+ * The raw-vs-benchmark split is what lets signal stats separate "the signal
+ * worked" from "the whole market moved".
  *
- * Runs once daily. For each golden/death cross SignalHistory entry that lacks
- * outcomes and is old enough, finds the first OhlcvCache bar on or after each
- * target date and records the % change from the signal's close_price.
+ * Runs once daily and revisits rows until they are complete. The previous
+ * one-shot design keyed eligibility on `outcome_computed_at: null` and ran at
+ * +10 calendar days — when only the 5d window had matured — so outcome_10d and
+ * outcome_20d stayed null forever. Eligibility is now data-driven: any row
+ * aged between ELIGIBLE_AGE_DAYS and STALE_AGE_DAYS whose 20d outcome or 20d
+ * benchmark is still null gets (re)processed; each pass fills only fields that
+ * are still null and never overwrites a stored value. Rows older than
+ * STALE_AGE_DAYS keep whatever they have — a delisted symbol (or an index
+ * window the cache never covered) would otherwise be re-scanned daily forever.
  *
- * Target windows (calendar days to approximate trading days):
- *   +5 trading  ≈ start looking 7 cal days out (search window: 5 cal days)
- *   +10 trading ≈ start looking 14 cal days out
- *   +20 trading ≈ start looking 28 cal days out
+ * `outcome_computed_at` now means "last computation attempt"; its only readers
+ * (routes/signals.ts, routes/ai.ts) use it as a has-outcomes `{ not: null }`
+ * filter, which is unaffected.
  */
 
 import { db } from "../src/db.js"
+import { getMarket, marketIndexSymbol } from "../src/utils/strong-death.js"
+import { addDays, benchmarkBase, windowReturns, WINDOW_END_CAL_DAYS } from "../src/utils/outcome-math.js"
+
+const ELIGIBLE_AGE_DAYS = 10   // ensures the +5-trading-day (≈7 cal) window has matured
+const STALE_AGE_DAYS    = 120  // beyond this, missing windows are accepted as permanently missing
 
 export async function runOutcome() {
   const now = new Date()
 
-  // Only process signals where signal_date is ≥10 calendar days ago
-  // (ensures at least 5 trading days of data will exist)
-  const eligibilityCutoff = new Date(now)
-  eligibilityCutoff.setDate(eligibilityCutoff.getDate() - 10)
-
   const pending = await db.signalHistory.findMany({
     where: {
-      outcome_computed_at: null,
-      signal_date: { lte: eligibilityCutoff },
       signal: { in: ["golden_cross", "death_cross"] },
+      signal_date: { lte: addDays(now, -ELIGIBLE_AGE_DAYS), gte: addDays(now, -STALE_AGE_DAYS) },
+      OR: [{ outcome_20d: null }, { benchmark_20d: null }],
     },
     orderBy: { signal_date: "asc" },
     take: 100,
@@ -38,41 +46,42 @@ export async function runOutcome() {
   for (let i = 0; i < pending.length; i += BATCH) {
     await Promise.allSettled(pending.slice(i, i + BATCH).map(async entry => {
       try {
-        const base       = entry.close_price
         const signalDate = new Date(entry.signal_date)
+        const windowEnd  = addDays(signalDate, WINDOW_END_CAL_DAYS)
+        const idx        = marketIndexSymbol(getMarket(entry.asset_type, entry.symbol))
 
-        const target5  = new Date(signalDate); target5.setDate(target5.getDate() + 7)
-        const target10 = new Date(signalDate); target10.setDate(target10.getDate() + 14)
-        const target20 = new Date(signalDate); target20.setDate(target20.getDate() + 28)
-
-        // One findMany spanning the full 20-day window; find each target in memory
-        const windowEnd = new Date(signalDate); windowEnd.setDate(windowEnd.getDate() + 33)
-        const priceRows = await db.ohlcvCache.findMany({
-          where: { symbol: entry.symbol, date: { gte: target5, lte: windowEnd } },
+        const barsInWindow = (symbol: string) => db.ohlcvCache.findMany({
+          where: { symbol, date: { gte: signalDate, lte: windowEnd } },
           orderBy: { date: "asc" },
           select: { date: true, close: true },
         })
-        const firstOnOrAfter = (target: Date): number | null =>
-          priceRows.find(r => r.date >= target)?.close ?? null
-        const price5  = firstOnOrAfter(target5)
-        const price10 = firstOnOrAfter(target10)
-        const price20 = firstOnOrAfter(new Date(signalDate.getTime() + 28 * 86_400_000))
+        const [priceRows, idxRows] = await Promise.all([
+          barsInWindow(entry.symbol),
+          barsInWindow(idx.symbol),
+        ])
 
-        const pct = (p: number | null): number | null =>
-          p != null ? (p - base) / base * 100 : null
+        const sym     = windowReturns(priceRows, entry.close_price, signalDate)
+        const idxBase = benchmarkBase(idxRows, signalDate)
+        const bench   = idxBase != null
+          ? windowReturns(idxRows, idxBase, signalDate)
+          : { d5: null, d10: null, d20: null }
 
+        // ?? keeps any previously stored value — passes only fill gaps
+        const merged = {
+          outcome_5d:    entry.outcome_5d    ?? sym.d5,
+          outcome_10d:   entry.outcome_10d   ?? sym.d10,
+          outcome_20d:   entry.outcome_20d   ?? sym.d20,
+          benchmark_5d:  entry.benchmark_5d  ?? bench.d5,
+          benchmark_10d: entry.benchmark_10d ?? bench.d10,
+          benchmark_20d: entry.benchmark_20d ?? bench.d20,
+        }
         await db.signalHistory.update({
           where: { id: entry.id },
-          data: {
-            outcome_5d:          pct(price5),
-            outcome_10d:         pct(price10),
-            outcome_20d:         pct(price20),
-            outcome_computed_at: new Date(),
-          },
+          data: { ...merged, outcome_computed_at: new Date() },
         })
 
         const fmt = (v: number | null) => v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : "N/A"
-        console.log(`  ✓ ${entry.symbol} ${String(entry.signal_date).slice(0, 10)} ${entry.signal}: 5d=${fmt(pct(price5))} 10d=${fmt(pct(price10))} 20d=${fmt(pct(price20))}`)
+        console.log(`  ✓ ${entry.symbol} ${String(entry.signal_date).slice(0, 10)} ${entry.signal}: 5d=${fmt(merged.outcome_5d)} 10d=${fmt(merged.outcome_10d)} 20d=${fmt(merged.outcome_20d)} 大盤20d=${fmt(merged.benchmark_20d)}`)
       } catch (err) {
         console.error(`  ✗ ${entry.symbol} ${entry.id}:`, err)
       }

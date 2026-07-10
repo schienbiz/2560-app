@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.5.0] — 2026-07-10
+
+### Fixed
+- **Outcome cron no longer one-shot — outcome_10d/20d were permanently null**: eligibility was
+  keyed on `outcome_computed_at: null` and rows became eligible at +10 calendar days, when only
+  the 5d window had matured — the stamp then excluded them forever, so every historical row had
+  10d/20d = null (verified in production: RDW 2026-04-23 still null at +77 days). Eligibility is
+  now data-driven (any golden/death cross aged 10–120 days whose 20d outcome or benchmark is
+  missing), each pass fills only fields that are still null and never overwrites a stored value,
+  and rows older than 120 days keep whatever they have so a delisted symbol isn't re-scanned
+  daily forever. All 7 mature production rows backfilled and verified.
+
+### Added
+- **Strong-death score persisted per signal** (`strong_passed`/`strong_applicable` on
+  `SignalHistory`): the 5-factor count was computed for the notification and then thrown away,
+  which made the backtested 83% claim unverifiable against live experience — there was no record
+  of which death crosses fired at which tier. The scan now persists the score at signal time;
+  the 5 historical death crosses were backfilled best-effort by re-scoring today's bars truncated
+  to each cross bar (PYPL 4/5, NI 3/5, LUNR 3/5, LEU 2/5, 2308.TW 2/5).
+- **Market-benchmark outcomes** (`benchmark_5d/10d/20d`): the regime index return (BTC / SPY /
+  0050.TW per market bucket, same mapping as the strong-death market factor) over the same
+  windows as each signal's outcome. Raw outcome alone conflates "the signal worked" with "the
+  whole market moved" — a death cross looks broken in a rally and prescient in a crash; the
+  benchmark column is what lets future signal stats separate the two. Base = index close at (or
+  first trading day after) the signal date, null on a >5-day cache gap rather than fabricated
+  from a late base.
+- Pure window math extracted to `src/utils/outcome-math.ts` (`getMarket` moved to
+  `src/utils/strong-death.ts`, re-exported from scan); 12 new tests cover window targeting,
+  holiday/gap handling, benchmark routing, null-preservation on re-passes, and batch isolation.
+
 ## [1.4.1] — 2026-07-09
 
 ### Fixed

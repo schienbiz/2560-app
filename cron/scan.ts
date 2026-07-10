@@ -15,7 +15,7 @@ import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal, hasSufficientBars, formatStrongDeathLine, FACTOR_COUNT } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
-import { evaluateStrongDeath } from "../src/utils/strong-death.js"
+import { evaluateStrongDeath, getMarket } from "../src/utils/strong-death.js"
 import type { MarketBucket } from "../src/utils/strong-death.js"
 import { notifyInsight } from "../src/services/ai.js"
 import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
@@ -29,16 +29,9 @@ const APP_URL        = process.env.APP_URL ?? "https://two560-app.onrender.com"
 
 type Market = MarketBucket
 
-// Classify a symbol into tw / us / crypto based on asset_type and symbol pattern.
-// TW = Taiwan stocks (.TW, .TWO) or 4-digit shorthand (e.g. "2330")
-// HK-listed stocks (.HK) trade same timezone as TW → treated as "tw" bucket
-// Exported for tests — the bucket decides which market index (BTC/SPY/0050)
-// the strong-death regime factor is judged against.
-export function getMarket(assetType: string, symbol: string): Market {
-  if (assetType === "crypto") return "crypto"
-  if (/\.(TWO?|HK)$/i.test(symbol) || /^\d{4}$/.test(symbol)) return "tw"
-  return "us"
-}
+// getMarket moved to src/utils/strong-death.ts (cron/outcome.ts needs it for
+// benchmark routing); re-exported here so existing imports keep working.
+export { getMarket }
 
 // Smart MACD formatter: large values (BTC) get 0-2 decimals, small (alt) get 4-6
 function fmtMacd(v: number): string {
@@ -212,6 +205,10 @@ export async function runScan(markets?: Market[]) {
                 ma25:        maFastLast,
                 ma60:        maSlowLast,
                 confidence,
+                // Persisted at signal time so live precision per confirmation
+                // tier can later be measured against the backtest claim.
+                strong_passed:     strongDeath?.passed,
+                strong_applicable: strongDeath?.applicable,
               },
               update: {},
             })

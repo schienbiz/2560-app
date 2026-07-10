@@ -91,7 +91,12 @@ model SignalHistory {
   outcome_5d           Float?     // % change 5 trading days after signal
   outcome_10d          Float?     // % change 10 trading days after signal
   outcome_20d          Float?     // % change 20 trading days after signal
-  outcome_computed_at  DateTime?
+  outcome_computed_at  DateTime?  // last computation attempt (not completion)
+  strong_passed        Int?       // 強確認死叉 factors passed at the cross bar (death crosses only)
+  strong_applicable    Int?       // factors with enough data — denominator for strong_passed
+  benchmark_5d         Float?     // market index (BTC/SPY/0050) % change over the same +5d window
+  benchmark_10d        Float?
+  benchmark_20d        Float?
   created_at           DateTime   @default(now())
 
   trades      TradeRecord[]

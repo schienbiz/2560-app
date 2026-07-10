@@ -27,6 +27,19 @@ import type { OHLCV, AssetType } from "../engine/types.js"
 
 export type MarketBucket = "tw" | "us" | "crypto"
 
+// Classify a symbol into tw / us / crypto based on asset_type and symbol pattern.
+// TW = Taiwan stocks (.TW, .TWO) or 4-digit shorthand (e.g. "2330")
+// HK-listed stocks (.HK) trade same timezone as TW → treated as "tw" bucket
+// The bucket decides which market index (BTC/SPY/0050) the strong-death regime
+// factor and the outcome benchmark are judged against. Lives here (not in
+// cron/scan.ts) so cron/outcome.ts can route benchmarks without importing
+// scan's notify/AI dependency graph.
+export function getMarket(assetType: string, symbol: string): MarketBucket {
+  if (assetType === "crypto") return "crypto"
+  if (/\.(TWO?|HK)$/i.test(symbol) || /^\d{4}$/.test(symbol)) return "tw"
+  return "us"
+}
+
 export const DEEP_DAYS       = 730   // calendar days: Yahoo "2y" ≈ 500 trading bars; Kraken 720 daily bars
 export const DEEP_MIN_BARS   = 430   // below this the DB cache window is considered insufficient
 export const MARKET_MIN_BARS = 200   // MA200 applicability gate for the market factor
