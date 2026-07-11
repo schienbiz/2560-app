@@ -17,37 +17,28 @@ jobs:
             [ "$code" = "200" ] && echo "OK" || echo "FAIL:${code:-timeout}"
           }
 
+          # Only the CF Worker is publicly reachable. chusMBp services (proxy/ai-pm/ai-learning)
+          # were probed via the ngrok HTTP tunnel — retired 2026-07-11 (free-tier ERR_NGROK_727
+          # blocked non-browser curl → permanent false-FAIL). They are now monitored by the ATung
+          # watchdog over Tailscale + bore; GitHub Actions cannot reach them (no public tunnel).
           R2=$(check "${{ secrets.APP_URL }}/__up")
-          R3=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/health")
-          R4=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/pm/api/status")
-          R5=$(check "https://cancel-aneurism-uneven.ngrok-free.dev/learn")
 
           fmt_crit() {
             [ "$2" = "OK" ] && echo "[OK] $1" || echo "[FAIL] $1 ($2)"
           }
-          fmt_warn() {
-            [ "$2" = "OK" ] && echo "[OK] $1" || echo "[WARN] $1 ($2) — ngrok traffic policy"
-          }
 
           L2=$(fmt_crit "2560-app (CF Worker)" "$R2")
-          L3=$(fmt_warn "chusMBp proxy" "$R3")
-          L4=$(fmt_warn "ai-pm (chusMBp)" "$R4")
-          L5=$(fmt_warn "ai-learning (chusMBp)" "$R5")
 
-          # ngrok ERR_NGROK_727 blocks non-browser curl — only count critical services as FAIL
           CRITICAL_FAILS=$(printf '%s\n' "$R2" | grep -c "^FAIL" || true)
-          ALL_WARNS=$(printf '%s\n' "$R3" "$R4" "$R5" | grep -c "^FAIL" || true)
           DATE=$(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M Taipei')
 
-          if [ "$CRITICAL_FAILS" -eq 0 ] && [ "$ALL_WARNS" -eq 0 ]; then
-            HEADER="✅ All services healthy (${DATE})"
-          elif [ "$CRITICAL_FAILS" -eq 0 ]; then
-            HEADER="⚠️ ${ALL_WARNS} chusMBp service(s) warn (ngrok) (${DATE})"
+          if [ "$CRITICAL_FAILS" -eq 0 ]; then
+            HEADER="✅ CF Worker healthy (${DATE})"
           else
             HEADER="🔴 ${CRITICAL_FAILS} critical service(s) DOWN (${DATE})"
           fi
 
-          MSG=$(printf '%s\n%s\n%s\n%s\n%s' "$HEADER" "$L2" "$L3" "$L4" "$L5")
+          MSG=$(printf '%s\n%s' "$HEADER" "$L2")
           echo "$MSG"
 
           curl -s -X POST \
