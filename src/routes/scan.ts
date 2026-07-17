@@ -14,7 +14,7 @@ import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
-import { liveClose } from "../utils/quote.js"
+import { fetchQuoteSafe } from "../utils/quote.js"
 
 export const scanRouter = new Hono()
 scanRouter.use("*", authMiddleware)
@@ -38,7 +38,12 @@ scanRouter.get("/", async c => {
       const slowPeriod = item.alert?.slow_period ?? 60
       const days = fetchDaysFor(slowPeriod, assetType)
 
-      const ohlcv  = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
+      // Quote and bars are independent — fetch in parallel so a scan press
+      // costs one round trip, not two.
+      const [ohlcv, quote] = await Promise.all([
+        getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter),
+        fetchQuoteSafe(adapter, normalizedSymbol),
+      ])
       const closes = ohlcv.map(b => b.close)
       const maFast = computeMA(closes, fastPeriod)
       const maSlow = computeMA(closes, slowPeriod)
@@ -53,7 +58,7 @@ scanRouter.get("/", async c => {
         // settled-day cache still ends at yesterday's bar (kept fresh until
         // 05:30 UTC for scan-tw), so the bar close is the PREVIOUS session's
         // close — visibly wrong next to a brokerage app's real-time price.
-        close:       await liveClose(adapter, normalizedSymbol, latest?.close ?? null),
+        close:       quote ?? latest?.close ?? null,
         signal:      enough ? result.signal : "none",
         confidence:  enough ? result.confidence : "low",
         ma25:        result.ma25,

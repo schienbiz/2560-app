@@ -42,7 +42,8 @@ const SECTIONS = [
         <tr><td>加密貨幣</td><td>交易對</td><td>BTCUSDT、ETHUSDT</td></tr>
       </table>
       <h4>立即掃描</h4>
-      <p>點擊 <strong>⚡ 掃描</strong> 對所有標的重新計算訊號，顯示目前交叉狀態、信心度標記。</p>
+      <p>點擊 <strong>⚡ 掃描</strong> 抓取所有標的<strong>當下的即時價位</strong>（台股走證交所即時行情，與券商 App 同源；加密貨幣走 Kraken 即時成交價），並重新計算訊號、顯示目前交叉狀態與信心度標記。</p>
+      <p>價位<strong>只在按下掃描時更新</strong>，平時不會自動刷新——清單上的價格代表「上次掃描當下」的即時價。</p>
       <h4>設定標的 ⚙</h4>
       <ul>
         <li><strong>均線組合</strong>：5/20、25/60（預設）、50/200，或自訂數值</li>

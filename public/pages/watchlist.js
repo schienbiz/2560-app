@@ -9,7 +9,6 @@
 
 import { api, ApiError } from "../api.js";
 import { showToast, openSheet, closeSheet, navigate } from "../app.js";
-import { getSession } from "../platform.js";
 
 function esc(s) {
   return String(s ?? "")
@@ -21,47 +20,9 @@ function esc(s) {
 // e.g. "BTC/USDT" → "BTC_47_USDT", "2330.TW" → "2330_46_TW"
 function safeId(sym) { return String(sym).replace(/[^a-zA-Z0-9]/g, c => `_${c.charCodeAt(0)}_`); }
 
-// ── WebSocket live-price client ───────────────────────────────────────────────
-
-let _ws = null;
-let _reconnectTimer = null;
-
-function connectWs() {
-  clearTimeout(_reconnectTimer);
-  _reconnectTimer = null;
-  if (_ws) { _ws.close(); _ws = null; }
-
-  const session = getSession();
-  if (!session) return;
-
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${location.host}/ws`);
-  _ws = ws;
-
-  ws.onopen = () => {
-    const token = session.platform === "telegram"
-      ? `TG ${session.token}`
-      : `Bearer ${session.token}`;
-    ws.send(JSON.stringify({ type: "auth", token }));
-  };
-
-  ws.onmessage = (evt) => {
-    let msg;
-    try { msg = JSON.parse(evt.data); } catch { return; }
-    if (msg.type === "price") applyPriceUpdate(msg);
-  };
-
-  ws.onclose = () => {
-    _ws = null;
-    // Reconnect only if watchlist tab is still active
-    const page = document.getElementById("page-watchlist");
-    if (page?.classList.contains("active")) {
-      _reconnectTimer = setTimeout(connectWs, 5000);
-    }
-  };
-
-  ws.onerror = () => ws.close();
-}
+// ── On-demand price refresh ───────────────────────────────────────────────────
+// Prices update ONLY when the user presses ⚡ 掃描 — no WebSocket, no polling.
+// Each scan result row also refreshes the matching watchlist row in place.
 
 function applyPriceUpdate(msg) {
   const sym = msg.symbol;
@@ -146,7 +107,6 @@ export async function renderWatchlist(container) {
   document.getElementById("wl-add-btn").addEventListener("click", openAddSheet);
   document.getElementById("wl-scan-btn").addEventListener("click", () => runScan(container));
   await loadList(container);
-  connectWs();
 }
 
 async function loadList(container) {
@@ -241,6 +201,9 @@ async function runScan(container) {
         ${results.map(renderScanRow).join("")}
       </div>
     `;
+
+    // Refresh the watchlist rows in place with the same scan data
+    results.forEach((item) => { if (!item.error) applyPriceUpdate(item); });
 
     // Tap scan row → go to chart
     resultsEl.querySelectorAll(".scan-row").forEach((el) => {

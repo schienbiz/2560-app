@@ -1,7 +1,5 @@
 import { serve } from "@hono/node-server"
-import { WebSocketServer } from "ws"
 import app from "./src/index.js"
-import { handleWsConnection } from "./src/routes/ws.js"
 
 const port = parseInt(process.env.PORT ?? "3000", 10)
 
@@ -21,21 +19,10 @@ if (process.env.TELEGRAM_BOT_TOKEN) {
   }).catch(() => {/* non-critical */})
 }
 
-// Start the HTTP server first — serve() returns the underlying http.Server.
-const server = serve({ fetch: app.fetch, port }, () => {
+// No WebSocket: live prices are on-demand only (⚡ 掃描 → /api/scan). The old
+// /ws push refreshed quotes every 10 s per connection — a standing poll against
+// TWSE/Kraken/Yahoo the user never asked for. Unhandled upgrade requests from
+// stale cached clients are closed by Node's default behavior.
+serve({ fetch: app.fetch, port }, () => {
   console.log(`2560-app running on port ${port}`)
 })
-
-// Attach a WebSocket server to the same port via the HTTP upgrade event.
-// noServer: true means ws doesn't bind its own port — we handle the upgrade.
-const wss = new WebSocketServer({ noServer: true })
-
-server.on("upgrade", (req, socket, head) => {
-  if (req.url === "/ws") {
-    wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws))
-  } else {
-    socket.destroy()
-  }
-})
-
-wss.on("connection", handleWsConnection)

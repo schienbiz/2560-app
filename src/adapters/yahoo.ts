@@ -148,7 +148,15 @@ export class YahooFinanceAdapter implements MarketAdapter {
       : null
 
     if (twCode) {
-      const twsePrice = await this._twseQuote(twCode)
+      // Route by suffix: ".TW" is TWSE-listed, ".TWO" is TPEX/OTC — probing the
+      // other exchange is a guaranteed miss that used to cost a serial round
+      // trip. Bare 4-digit shorthand probes both, in parallel (wall time = one
+      // round trip instead of two).
+      const exchanges =
+        upper.endsWith(".TWO") ? ["otc" as const]
+        : upper.endsWith(".TW") ? ["tse" as const]
+        : ["tse" as const, "otc" as const]
+      const twsePrice = await this._twseQuote(twCode, exchanges)
       if (twsePrice !== null) return twsePrice
       // TWSE unavailable (market closed or holiday) — fall through to Yahoo
     }
@@ -158,22 +166,26 @@ export class YahooFinanceAdapter implements MarketAdapter {
   }
 
   /** TWSE/TPEX real-time ticker — free, no auth, same source used by all TW brokerages */
-  private async _twseQuote(code: string): Promise<number | null> {
-    // Try TWSE-listed first, then TPEX (OTC)
-    for (const [ex, suffix] of [["tse", ".tw"], ["otc", ".two"]] as [string, string][]) {
+  private async _twseQuote(code: string, exchanges: ("tse" | "otc")[]): Promise<number | null> {
+    const probe = async (ex: "tse" | "otc"): Promise<number | null> => {
       try {
+        const suffix = ex === "tse" ? ".tw" : ".two"
         const url = `${TWSE_BASE}?ex_ch=${ex}_${code}${suffix}&_=${Date.now()}`
         const res = await fetch(url, {
           headers: { "User-Agent": "Mozilla/5.0" },
           signal: AbortSignal.timeout(4000),
         })
-        if (!res.ok) continue
+        if (!res.ok) return null
         const json = await res.json() as TwseResponse
-        const price = parseTwseSnapshot(json.msgArray?.[0])
-        if (price !== null) return price
-      } catch { /* timeout or network error — try next */ }
+        return parseTwseSnapshot(json.msgArray?.[0])
+      } catch {
+        return null   // timeout or network error
+      }
     }
-    return null
+    // A symbol lists on exactly one exchange, so at most one probe returns a
+    // price — first non-null wins, order doesn't matter.
+    const prices = await Promise.all(exchanges.map(probe))
+    return prices.find(p => p !== null) ?? null
   }
 
   /** Yahoo v8 chart meta price — live quote for US stocks, fallback for TW */

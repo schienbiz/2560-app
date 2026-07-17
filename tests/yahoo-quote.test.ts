@@ -110,4 +110,44 @@ describe("fetchQuote endpoint routing (v7-crumb regression)", () => {
     expect(price).toBe(2370)
     expect(calls.every(u => u.includes("mis.twse.com.tw"))).toBe(true)
   })
+
+  it(".TW routes straight to TSE — no wasted OTC probe", async () => {
+    const calls: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ msgArray: [{ z: "2370.0000" }] }))
+    }))
+
+    await new YahooFinanceAdapter().fetchQuote("2330.TW")
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain("ex_ch=tse_2330.tw")
+  })
+
+  it(".TWO routes straight to OTC", async () => {
+    const calls: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url))
+      return new Response(JSON.stringify({ msgArray: [{ z: "88.5" }] }))
+    }))
+
+    const price = await new YahooFinanceAdapter().fetchQuote("8937.TWO")
+    expect(price).toBe(88.5)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toContain("ex_ch=otc_8937.two")
+  })
+
+  it("bare 4-digit shorthand probes both exchanges in parallel and picks the hit", async () => {
+    const calls: string[] = []
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url))
+      if (String(url).includes("ex_ch=otc_")) {
+        return new Response(JSON.stringify({ msgArray: [{ z: "88.5" }] }))
+      }
+      return new Response(JSON.stringify({ msgArray: [] }))   // not TSE-listed
+    }))
+
+    const price = await new YahooFinanceAdapter().fetchQuote("8937")
+    expect(price).toBe(88.5)
+    expect(calls.filter(u => u.includes("mis.twse.com.tw"))).toHaveLength(2)
+  })
 })
