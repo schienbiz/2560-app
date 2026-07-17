@@ -10,8 +10,11 @@
  *
  *   fetchQuote("2330.TW")
  *     → Taiwan stocks: TWSE mis.twse.com.tw real-time API (same source as 台新/玉山 Securities)
- *       Falls back to Yahoo Finance v7/finance/quote when TWSE is closed or unavailable.
- *     → US stocks: Yahoo Finance v7/finance/quote (regularMarketPrice)
+ *       Falls back to the Yahoo v8 chart meta price when TWSE is unavailable.
+ *     → US stocks: Yahoo v8 chart meta.regularMarketPrice. The old
+ *       v7/finance/quote endpoint is crumb-gated and returns 401 Unauthorized
+ *       for keyless callers, so it silently never produced a live quote — the
+ *       v8 chart endpoint serves the same price without auth.
  *
  * Symbol formats:
  *   Taiwan stocks:  "2330.TW"
@@ -22,9 +25,35 @@
 import type { MarketAdapter } from "./interface.js"
 import type { OHLCV } from "../engine/types.js"
 
-const BASE       = "https://query1.finance.yahoo.com/v8/finance/chart"
-const QUOTE_BASE = "https://query1.finance.yahoo.com/v7/finance/quote"
-const TWSE_BASE  = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+const BASE      = "https://query1.finance.yahoo.com/v8/finance/chart"
+const TWSE_BASE = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+
+/**
+ * Pick a live price out of a TWSE mis snapshot.
+ *
+ * `z` (last trade) is "-" between trades, during the pre-open auction, and for
+ * illiquid symbols — sometimes for minutes. Falling straight through to Yahoo
+ * on "-" trades a real-time source for a delayed one, so degrade within the
+ * snapshot first: last trade → previous trade (`pz`) → best bid (`b`, an
+ * underscore-joined depth list; the head is the top of book).
+ */
+export function parseTwseSnapshot(
+  msg: { z?: string; pz?: string; b?: string } | undefined
+): number | null {
+  if (!msg) return null
+  for (const v of [msg.z, msg.pz, msg.b?.split("_")[0]]) {
+    if (!v || v === "-" || v === "N/A") continue
+    const price = parseFloat(v)
+    if (!isNaN(price) && price > 0) return price
+  }
+  return null
+}
+
+/** Extract the live price from a v8 chart response's meta block. */
+export function parseV8MetaPrice(json: YahooResponse): number | null {
+  const price = json.chart?.result?.[0]?.meta?.regularMarketPrice
+  return typeof price === "number" && price > 0 ? price : null
+}
 
 interface YahooQuoteArrays {
   open:   (number | null)[]
@@ -140,27 +169,23 @@ export class YahooFinanceAdapter implements MarketAdapter {
         })
         if (!res.ok) continue
         const json = await res.json() as TwseResponse
-        const z = json.msgArray?.[0]?.z
-        if (!z || z === "-" || z === "N/A") continue
-        const price = parseFloat(z)
-        if (!isNaN(price) && price > 0) return price
+        const price = parseTwseSnapshot(json.msgArray?.[0])
+        if (price !== null) return price
       } catch { /* timeout or network error — try next */ }
     }
     return null
   }
 
-  /** Yahoo Finance v7 quote — real-time price for US stocks, fallback for TW */
+  /** Yahoo v8 chart meta price — live quote for US stocks, fallback for TW */
   private async _yahooQuote(symbol: string): Promise<number | null> {
     try {
-      const url = `${QUOTE_BASE}?symbols=${encodeURIComponent(symbol)}&fields=regularMarketPrice`
+      const url = `${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=1d`
       const res = await fetch(url, {
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(4000),
       })
       if (!res.ok) return null
-      const json = await res.json() as YahooQuoteResponse
-      const price = json.quoteResponse?.result?.[0]?.regularMarketPrice
-      return typeof price === "number" ? price : null
+      return parseV8MetaPrice(await res.json() as YahooResponse)
     } catch {
       return null
     }
@@ -196,17 +221,10 @@ interface TwseResponse {
   }>
 }
 
-interface YahooQuoteResponse {
-  quoteResponse?: {
-    result?: Array<{
-      regularMarketPrice?: number
-    }>
-  }
-}
-
-interface YahooResponse {
+export interface YahooResponse {
   chart: {
     result?: Array<{
+      meta?: { regularMarketPrice?: number }
       timestamp: number[]
       indicators: {
         quote: Array<{

@@ -21,6 +21,7 @@ import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
+import { liveClose } from "../utils/quote.js"
 
 const INTERVAL_MS     = 10_000
 const WATCHLIST_TTL   = 60_000  // re-query DB at most once per minute per connection
@@ -70,18 +71,14 @@ async function pushPrices(ws: WebSocket, user: AuthUser): Promise<void> {
       const enough = hasSufficientBars(ohlcv.length, slowPeriod)
       const latest = ohlcv[ohlcv.length - 1]
 
-      // Try live quote; fall back to last OHLCV close when unavailable (market closed, etc.)
-      let liveClose = latest?.close ?? null
-      if (adapter.fetchQuote) {
-        const q = await adapter.fetchQuote(normalizedSymbol).catch(() => null)
-        if (q !== null) liveClose = q
-      }
+      // Live quote; falls back to last OHLCV close when unavailable (market closed, etc.)
+      const close = await liveClose(adapter, normalizedSymbol, latest?.close ?? null)
 
       if (ws.readyState !== 1) return
       ws.send(JSON.stringify({
         type:        "price",
         symbol:      normalizedSymbol,
-        close:       liveClose,
+        close,
         ma25:        maFast[maFast.length - 1] ?? null,
         ma60:        maSlow[maSlow.length - 1] ?? null,
         fast_period: fastPeriod,

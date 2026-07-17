@@ -14,6 +14,7 @@ import { getAdapter } from "../adapters/index.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../utils/ohlcv.js"
+import { liveClose } from "../utils/quote.js"
 
 export const scanRouter = new Hono()
 scanRouter.use("*", authMiddleware)
@@ -48,7 +49,11 @@ scanRouter.get("/", async c => {
       return {
         symbol:      item.symbol,
         asset_type:  assetType,
-        close:       latest?.close ?? null,
+        // Live quote, not the cached bar close: during TW market hours the
+        // settled-day cache still ends at yesterday's bar (kept fresh until
+        // 05:30 UTC for scan-tw), so the bar close is the PREVIOUS session's
+        // close — visibly wrong next to a brokerage app's real-time price.
+        close:       await liveClose(adapter, normalizedSymbol, latest?.close ?? null),
         signal:      enough ? result.signal : "none",
         confidence:  enough ? result.confidence : "low",
         ma25:        result.ma25,

@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.5.1] — 2026-07-17
+
+### Fixed
+- **掃描/即時價位對不上券商 App（台股整個交易時段顯示昨收）**：`/api/scan` 的 `close` 直接回
+  快取日線 bar 收盤。settled-day 快取為了 scan-tw 正確性維持新鮮到次日 05:30 UTC（= 台北 13:30
+  收盤），正好罩住整個台股交易時段——scan-tw 前一天收盤後寫入的序列，隔天盤中被視為新鮮，
+  掃描「現價」因此整天顯示昨日收盤（實測 2026-07-17 盤中：2330 顯示 2470 vs 台新即時 2365、
+  2308 顯示 1905 vs 1775）。快取節奏是訊號層的正確設計，不動；改為顯示層疊加即時報價：
+  `/api/scan` 與 WS 共用新的 `liveClose()` overlay（TWSE tick / Kraken ticker / Yahoo v8 meta），
+  報價源不可用時才回退 bar close。crypto 同理修正（掃描原顯示前一 UTC 日結算收盤）。
+- **美股從未有即時報價（Yahoo v7 quote 已被 crumb 閘死）**：`v7/finance/quote` 對無 key 呼叫
+  一律 401 Unauthorized，`_yahooQuote` 每次靜默回 null——美股 WS「即時價」實際上永遠是快取
+  bar close，台股的 Yahoo 備援也同樣失效。改打 v8 chart `meta.regularMarketPrice`（免 key，
+  已實測 AAPL/2330.TW）。
+- **TWSE 快照 `z`="-" 時過早降級**：盤前試撮/成交空窗/冷門股的 `z` 常為 "-"，原本直接落到
+  Yahoo（延遲源）。新增快照內降級鏈 `z`（成交）→ `pz`（前一筆）→ `b` 頭（最佳買價），
+  抽成純函式 `parseTwseSnapshot` 並補測試。
+
 ## [1.5.0] — 2026-07-10
 
 ### Fixed
