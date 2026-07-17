@@ -11,7 +11,7 @@ import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
 import { getCachedOHLCV } from "../src/cache.js"
-import { analyzeChart, type SignalHistoryEntry } from "../src/services/ai.js"
+import { morningInsight, type SignalHistoryEntry } from "../src/services/ai.js"
 import { pushLine, pushTelegram } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 
@@ -107,8 +107,15 @@ export async function runMorningSummary() {
       }
 
       const history = historyBySymbol.get(normalizedSymbol)
-      const analysis = await analyzeChart(chartData, "早安。用一到兩句話告訴我這個標的今天的操作方向，以及是否接近好的進出場時機。", history)
-      return `• ${watchlist.label ?? normalizedSymbol}\n  ${analysis}`
+      const insight = await morningInsight(chartData, fastPeriod, slowPeriod, history)
+
+      // Header carries the signal + data-as-of date: the GH cron regularly
+      // fires 2–4 h late, so「早安」can land mid-session — the reader must be
+      // able to see the advice is based on the previous close, not a live tick.
+      const lastBar  = ohlcv[ohlcv.length - 1]
+      const sigBadge = signal === "golden_cross" ? "🟢 黃金交叉" : "🔴 死亡交叉"
+      const fallback = `收盤 ${lastBar.close}，MA${fastPeriod} ${maFast[maFast.length - 1]?.toFixed(2)} / MA${slowPeriod} ${maSlow[maSlow.length - 1]?.toFixed(2)}`
+      return `• ${watchlist.label ?? normalizedSymbol} ${sigBadge}（資料至 ${lastBar.date}）\n  ${insight || fallback}`
     }))
 
     const lines: string[] = results

@@ -14,6 +14,7 @@
 
 import type { ChartData } from "../engine/types.js"
 import { computeStructure } from "../engine/structure.js"
+import { getMarket } from "../utils/strong-death.js"
 
 const NVIDIA_URL   = "https://integrate.api.nvidia.com/v1/chat/completions"
 const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
@@ -238,6 +239,14 @@ function fmt(n: number, decimals = 2): string {
   return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
 }
 
+// Market-aware asset label for prompts. The old `stock ? "台股" : "加密貨幣"`
+// branded every US stock as a Taiwan stock — the AI then analyzed AAPL in a
+// TWSE context (漲跌停/台幣). Route through the same bucket logic the scan uses.
+function assetLabel(assetType: string, symbol: string): string {
+  const m = getMarket(assetType, symbol)
+  return m === "tw" ? "台股" : m === "us" ? "美股" : "加密貨幣"
+}
+
 function pctDiff(a: number, b: number): string {
   const v = (a - b) / b * 100
   return `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`
@@ -315,9 +324,14 @@ function buildHistorySection(history?: SignalHistoryEntry[]): string {
 // ─── Chart analysis ───────────────────────────────────────────────────────────
 
 export async function analyzeChart(
-  data:      ChartData,
-  question?: string,
-  history?:  SignalHistoryEntry[]
+  data:       ChartData,
+  question?:  string,
+  history?:   SignalHistoryEntry[],
+  // Display labels only — ChartData.ma25/ma60 already hold the user's custom
+  // periods (D2 decision); without these the prompt claimed「MA25」over an MA5
+  // series and the AI narrated the wrong strategy back to the user.
+  fastPeriod: number = 25,
+  slowPeriod: number = 60
 ): Promise<string> {
   const lastBar = data.ohlcv.at(-1)
   if (!lastBar) return "資料不足，無法分析。"
@@ -383,10 +397,10 @@ export async function analyzeChart(
   const historySection = buildHistorySection(history)
 
   const context = [
-    `標的：${data.symbol}（${data.asset_type === "stock" ? "台股" : "加密貨幣"}）`,
-    `最新收盤：${fmt(close)}`,
-    `MA25：${ma25v != null ? fmt(ma25v) : "N/A"}${ma25Slope}（收盤距 MA25：${ma25v != null ? pctDiff(close, ma25v) : "N/A"}）`,
-    `MA60：${ma60v != null ? fmt(ma60v) : "N/A"}${ma60Slope}（MA25 距 MA60：${(ma25v != null && ma60v != null) ? pctDiff(ma25v, ma60v) : "N/A"}）`,
+    `標的：${data.symbol}（${assetLabel(data.asset_type, data.symbol)}）`,
+    `最新收盤：${fmt(close)}（${lastBar.date}）`,
+    `MA${fastPeriod}：${ma25v != null ? fmt(ma25v) : "N/A"}${ma25Slope}（收盤距 MA${fastPeriod}：${ma25v != null ? pctDiff(close, ma25v) : "N/A"}）`,
+    `MA${slowPeriod}：${ma60v != null ? fmt(ma60v) : "N/A"}${ma60Slope}（MA${fastPeriod} 距 MA${slowPeriod}：${(ma25v != null && ma60v != null) ? pctDiff(ma25v, ma60v) : "N/A"}）`,
     rsiLabel,
     macdLabel,
     `2560訊號：${signalLabel}`,
@@ -402,8 +416,8 @@ export async function analyzeChart(
     ``,
     data.support.length    ? `支撐區：${data.support.map(v => fmt(v)).join("、")}` : "",
     data.resistance.length ? `壓力區：${data.resistance.map(v => fmt(v)).join("、")}` : "",
-    `進場區（MA25 ±1%）：${entryZone}`,
-    `偏向失效線（MA60）：${ma60v != null ? fmt(ma60v) : "N/A"}`,
+    `進場區（MA${fastPeriod} ±1%）：${entryZone}`,
+    `偏向失效線（MA${slowPeriod}）：${ma60v != null ? fmt(ma60v) : "N/A"}`,
   ].filter(Boolean).join("\n")
 
   const task = question
@@ -414,11 +428,11 @@ export async function analyzeChart(
 
 ${task}
 
-1) 趨勢階段：impulse（推進）、correction（回調）還是 range（盤整）？說明 MA25/MA60 排列與斜率方向。
+1) 趨勢階段：impulse（推進）、correction（回調）還是 range（盤整）？說明 MA${fastPeriod}/MA${slowPeriod} 排列與斜率方向。
 2) 價格結構：從擺動點描述 HH/HL 或 LH/LL 結構，判斷多空誰在控盤。
 3) 量價關係：從近期 K 線的成交量倍數（V×），判斷量是否配合方向（放量突破/縮量回調）。
 4) 動能確認：RSI 與 MACD 柱狀是否與訊號方向一致？說明超買/超賣風險。
-5) 進場區與操作：依 2560戰法，進場區（MA25 ±1%）、入場條件、多方/空方/觀望；若有歷史勝率資料請納入信心評估。
+5) 進場區與操作：依 2560戰法，進場區（MA${fastPeriod} ±1%）、入場條件、多方/空方/觀望；若有歷史勝率資料請納入信心評估。
 6) 偏向與失效條件：看多/看空/觀望，一句話核心理由，並具體說明哪個收盤價位會使此偏向失效。
 
 每點 1–2 句，嚴格依照六點編號，簡潔有力。`
@@ -470,7 +484,49 @@ export async function notifyInsight(
 訊號：${signalCtx}
 趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}${indicators ? "\n" + indicators : ""}
 
-用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過50字）。`
+用一句繁體中文說明此訊號的操作意義（直接說結論，不要前綴詞如「建議」「根據」，不要標號，不要超過50字）。引用價位時必須使用上方提供的數值，不可自行計算或改寫。`
+
+  try {
+    const raw = await chat(prompt)
+    return raw.replace(/^[\d\.\s]+/, "").replace(/^(建議|根據|由於|因此|總結)[，：:、]?/, "").trim()
+  } catch {
+    return ""
+  }
+}
+
+// ─── Morning digest insight (1–2 sentences per symbol, 8am push) ─────────────
+//
+// The morning summary used to call analyzeChart, whose six-point mandate
+// contradicted its own「用一到兩句話」ask — every symbol ballooned into a full
+// analysis, and a multi-symbol digest could blow past Telegram's 4096-char cap
+// (the push then 400s and the user receives NOTHING). This builds a compact
+// prompt and rides the single-model chat() chain instead of 5-model multiChat.
+// Returns "" on failure so the caller can degrade to a raw data line.
+export async function morningInsight(
+  data:       ChartData,
+  fastPeriod: number,
+  slowPeriod: number,
+  history?:   SignalHistoryEntry[]
+): Promise<string> {
+  const lastBar = data.ohlcv.at(-1)
+  if (!lastBar) return ""
+
+  const maF    = lastNonNull(data.ma25)
+  const maS    = lastNonNull(data.ma60)
+  const struct = computeStructure(data.ohlcv, data.ma25, data.ma60)
+
+  const sigLabel = data.signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
+  const conf     = data.confidence === "high" ? "高（成交量放大）" : "普通"
+  const rsiStr   = data.rsi != null      ? `，RSI ${data.rsi.toFixed(1)}` : ""
+  const macdStr  = data.macdHist != null ? `，MACD柱 ${data.macdHist >= 0 ? "+" : ""}${data.macdHist.toFixed(4)}` : ""
+
+  const prompt = `標的：${data.symbol}（${assetLabel(data.asset_type, data.symbol)}）
+資料截至 ${lastBar.date} 收盤：${fmt(lastBar.close)}
+MA${fastPeriod}：${maF != null ? fmt(maF) : "N/A"} ${maSlope(data.ma25)}，MA${slowPeriod}：${maS != null ? fmt(maS) : "N/A"} ${maSlope(data.ma60)}
+趨勢階段：${phaseLabel(struct.phase)}，偏向：${struct.bias === "bullish" ? "看多" : struct.bias === "bearish" ? "看空" : "中性"}${rsiStr}${macdStr}
+2560訊號：${sigLabel}（近3日內，信心度：${conf}）${buildHistorySection(history)}
+
+早安簡報：用一到兩句繁體中文說明今天的操作方向，以及是否接近好的進出場時機（2560戰法進場區 = MA${fastPeriod} ±1%）。直接說結論，不要前綴詞，不超過80字。引用價位時必須使用上方提供的數值，不可自行計算或改寫。`
 
   try {
     const raw = await chat(prompt)

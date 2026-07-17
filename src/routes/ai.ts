@@ -87,7 +87,7 @@ aiRouter.post("/analyze/:symbol", async c => {
       },
     }) satisfies SignalHistoryEntry[]
 
-    const analysis = await analyzeChart(data, body.question, historyRows)
+    const analysis = await analyzeChart(data, body.question, historyRows, fastPeriod, slowPeriod)
     return c.json({ analysis })
   } catch (err) {
     console.error("[ai/analyze]", err)

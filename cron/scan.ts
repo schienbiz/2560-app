@@ -40,6 +40,34 @@ function fmtMacd(v: number): string {
   return (v >= 0 ? "+" : "") + v.toFixed(dec)
 }
 
+// Price for notification text: Yahoo returns raw floats (333.260009765625) that
+// read like garbage in a push message. ≥1 gets 2 decimals, sub-1 alts get 6.
+export function fmtPrice(n: number): string {
+  return n.toLocaleString("en-US", { maximumFractionDigits: Math.abs(n) >= 1 ? 2 : 6 })
+}
+
+/**
+ * Action line for a cross notification.
+ *
+ * A death cross is a SELL signal in the 2560 strategy, but the old copy pasted
+ * the golden-cross「進場區…停損」line under both crosses — telling the user
+ * where to BUY into a bearish cross. Golden keeps the entry zone; death frames
+ * the same MA band as rebound-trim resistance instead.
+ */
+export function crossActionLine(
+  signal: "golden_cross" | "death_cross",
+  fastPeriod: number,
+  slowPeriod: number,
+  maFast: number,
+  maSlow: number
+): string {
+  const low  = fmtPrice(maFast * 0.99)
+  const high = fmtPrice(maFast * 1.01)
+  return signal === "golden_cross"
+    ? `進場區 ${low}–${high}，跌破 ${fmtPrice(maSlow)}（MA${slowPeriod}）停損`
+    : `死叉為出場訊號：反彈至 ${low}–${high}（MA${fastPeriod}）視為減碼壓力區`
+}
+
 function deepLink(symbol: string): string {
   return `\n${APP_URL}/?symbol=${encodeURIComponent(symbol)}`
 }
@@ -150,9 +178,6 @@ export async function runScan(markets?: Market[]) {
             const emoji      = signal === "golden_cross" ? "🟢" : "🔴"
             const confLabel  = confidence === "high" ? " 高信心度" : ""
             const arrow      = signal === "golden_cross" ? "↑" : "↓"
-            const entryLow   = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
-            const entryHigh  = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
-            const stopLine   = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
 
             // Use pre-fetched Fear & Greed (already cached)
             let sentiment: SentimentResult | undefined
@@ -185,10 +210,10 @@ export async function runScan(markets?: Market[]) {
             const msg = [
               `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
               strongLine,
-              `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${latest.close}`,
+              `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${fmtPrice(latest.close)}`,
               indLine,
               sentLine,
-              `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
+              crossActionLine(signal, fastPeriod, slowPeriod, maFastLast, maSlowLast),
               insight,
             ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
@@ -250,7 +275,7 @@ export async function runScan(markets?: Market[]) {
 
               const proximityMsg = [
                 `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區`,
-                `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${latest.close}`,
+                `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${fmtPrice(latest.close)}`,
                 proxInd,
                 `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
                 insight,
@@ -303,7 +328,7 @@ export async function runScan(markets?: Market[]) {
               })
 
               if (!alreadyExited) {
-                const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${latest.close}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
+                const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${fmtPrice(latest.close)}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
 
                 await push(watchlist.platform, watchlist.user_id, exitMsg)
 
