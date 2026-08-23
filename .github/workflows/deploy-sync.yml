@@ -1,15 +1,23 @@
 name: Sync deploy to Render backends
 
-# push 到 main 時，自動觸發兩個 Render 後端重佈，讓「交替互補」的 standby 永遠保持最新。
-# 用 Render Deploy Hook（各服務 Settings → Deploy Hook 的 URL），存進 repo secrets：
+# 手動把「兩個 Render 後端」強制拉到 main 最新 commit。
+#
+# 為什麼不掛在 push 上（2026-08-22 實查後改）：
+#   兩個後端的 Render service 都是 autoDeploy=yes / autoDeployTrigger=commit，
+#   push 時各自原生 new_commit 部署。deploy 記錄實證 atungc2020 從 6/20 起每次 push
+#   都跑「new_commit + deploy_hook」兩次部署，第二次把第一次做到一半的作廢 —
+#   純重複、建置時間加倍。所以 hook 改成只在 workflow_dispatch 手動觸發。
+#
+# 真正需要它的時機：free tier billing suspend 期間 auto-deploy 被擋，resume 後
+# Render 不會補跑那些 push（見 memory feedback_suspend_blocks_autodeploy）。
+# 這時手動跑一次本 workflow，兩個後端就會一起對齊 main。
+#
+# Repo secrets（Settings → Secrets and variables → Actions）：
 #   RENDER_HOOK_ATUNGC2020  = two560-app-2（現役，atungc2020）
-#   RENDER_HOOK_SCHIENBIZ   = two560-app（備援，schienbiz；7/1 復活後再設）
-# atungc2020(public-repo) 靠這個 hook 才會在 push 後自動重佈；schienbiz 原生 auto-deploy，
-# 設了 hook 只是雙保險。沒設的 secret 會自動略過。
+#   RENDER_HOOK_SCHIENBIZ   = 2560-app / two560-app.onrender.com（備援，schienbiz）
+# 未設定的 secret 會明確 fail，不再靜默略過。
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -20,14 +28,23 @@ jobs:
         env:
           HOOK: ${{ secrets.RENDER_HOOK_ATUNGC2020 }}
         run: |
-          if [ -z "$HOOK" ]; then echo "RENDER_HOOK_ATUNGC2020 未設定，略過"; exit 0; fi
-          curl -fsS -X POST "$HOOK" && echo "✅ atungc2020 deploy 已觸發"
+          set -euo pipefail
+          if [ -z "${HOOK}" ]; then
+            echo "::error::RENDER_HOOK_ATUNGC2020 未設定"
+            exit 1
+          fi
+          curl -fsS -X POST "${HOOK}" > /dev/null
+          echo "✅ atungc2020 deploy 已觸發"
 
-      - name: Trigger schienbiz (two560-app) deploy
+      - name: Trigger schienbiz (2560-app) deploy
         if: always()
         env:
           HOOK: ${{ secrets.RENDER_HOOK_SCHIENBIZ }}
         run: |
-          if [ -z "$HOOK" ]; then echo "RENDER_HOOK_SCHIENBIZ 未設定，略過（7/1 前可不設）"; exit 0; fi
-          curl -fsS -X POST "$HOOK" && echo "✅ schienbiz deploy 已觸發" \
-            || echo "⚠️ schienbiz hook 失敗（可能 suspended 中，非致命）"
+          set -euo pipefail
+          if [ -z "${HOOK}" ]; then
+            echo "::error::RENDER_HOOK_SCHIENBIZ 未設定"
+            exit 1
+          fi
+          curl -fsS -X POST "${HOOK}" > /dev/null
+          echo "✅ schienbiz deploy 已觸發"
