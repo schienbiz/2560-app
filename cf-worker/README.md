@@ -5,7 +5,7 @@
 - **線上網址**：`https://two560-app.atungc2020.workers.dev`
 - **現役後端**：`two560-app-2.onrender.com`（atungc2020 Render，免費）
 - **交替後端**：`two560-app.onrender.com`（schienbiz，7/1 後當休眠交替後端）
-- **CF 帳號**：Atungc2020@gmail.com
+- **CF 帳號**：見本機密碼管理器（公開 repo 不放個人 email）
 
 ## 為什麼這樣設計
 - 兩個 Render 帳號的服務當**可互換後端**，前端固定在 CF edge（無單點、免網域）。
