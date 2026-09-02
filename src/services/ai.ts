@@ -16,20 +16,31 @@ import type { ChartData } from "../engine/types.js"
 import { computeStructure } from "../engine/structure.js"
 import { getMarket } from "../utils/strong-death.js"
 
+// Models checked against the live APIs on 2026-09-02. Every id here was dead
+// before that: llama-4-scout 404 and qwen3-32b 404 on Groq, Cerebras 402 on the
+// key, NVIDIA's llama-3.3-70b 410 (EOL 2026-08-26), and BOTH OpenRouter models —
+// kimi-k2.6:free and deepseek-r1:free — 404 with "unavailable for free".
+//
+// `params` is per MODEL, not per provider: qwen3.x needs reasoning_effort 'none'
+// or it returns its <think> block as the answer, while gpt-oss rejects 'none'
+// with a 400 and wants low|medium|high.
 const NVIDIA_URL   = "https://integrate.api.nvidia.com/v1/chat/completions"
-const NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
+const NVIDIA_MODEL = "openai/gpt-oss-120b"
 
-const GROQ_URL   = "https://api.groq.com/openai/v1/chat/completions"
-const GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
+const GROQ_MODEL     = "openai/gpt-oss-120b"
+const GROQ_QWEN_MODEL = "qwen/qwen3.8-27b"
 
-const CEREBRAS_URL   = "https://api.cerebras.ai/v1/chat/completions"
-const CEREBRAS_MODEL = "gpt-oss-120b"
+// Cerebras removed 2026-09-02 — every key on that account answers 402.
 
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
-const OPENROUTER_MODEL = "moonshotai/kimi-k2.6:free"
+const OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 
-// DeepSeek R1: reasoning model via OpenRouter free tier (gatherOnly — parallel analysis only)
-const DEEPSEEK_MODEL = "deepseek/deepseek-r1:free"
+// Second free OpenRouter voice for the parallel gather, replacing deepseek-r1:free.
+const OPENROUTER_ALT_MODEL = "minimax/minimax-m3:free"
+
+const REASONING_LOW  = { reasoning_effort: "low" } as const
+const REASONING_NONE = { reasoning_effort: "none" } as const
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
@@ -64,7 +75,8 @@ async function callProvider(
   model:        string,
   userMsg:      string,
   maxTokens:    number = 500,
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  params?:      Record<string, unknown>
 ): Promise<string> {
   if (circuitIsOpen(label)) throw new Error(`[${label}] circuit open`)
 
@@ -82,6 +94,7 @@ async function callProvider(
     body: JSON.stringify({
       model,
       max_tokens: maxTokens,
+      ...params,
       messages: [
         { role: "system", content: SYSTEM },
         { role: "user",   content: userMsg },
@@ -97,8 +110,19 @@ async function callProvider(
     throw new Error(`[${label}] error ${res.status}: ${err.slice(0, 120)}`)
   }
 
-  const data = await res.json() as { choices: { message: { content: string | null } }[] }
-  return data.choices[0]?.message?.content?.trim() || "無法生成回覆。"
+  const data = await res.json() as {
+    choices: { message: { content: string | null }; finish_reason?: string }[]
+  }
+  const text = data.choices[0]?.message?.content?.trim()
+  if (!text) {
+    // This used to return the literal string 無法生成回覆。 as a SUCCESS, so the
+    // sequential chain stopped here and the user was shown "cannot generate a
+    // reply" while three working providers went untried. On a reasoning model an
+    // empty `content` is the ordinary shape when the budget goes to thinking, so
+    // it has to be a failure the chain can fall through.
+    throw new Error(`[${label}] empty content (finish_reason=${data.choices[0]?.finish_reason})`)
+  }
+  return text
 }
 
 // ─── Provider registry ────────────────────────────────────────────────────────
@@ -110,6 +134,7 @@ interface Provider {
   key:          () => string | undefined
   gatherOnly?:  boolean  // if true: only used in multiChat (parallel), skipped in chat (sequential)
   extraHeaders?: Record<string, string>
+  params?:      Record<string, unknown>  // per-MODEL body fields, e.g. reasoning_effort
 }
 
 function getProviders(): Provider[] {
@@ -117,30 +142,44 @@ function getProviders(): Provider[] {
     {
       label: "Groq", url: GROQ_URL, model: GROQ_MODEL,
       key: () => process.env.GROQ_API_KEY,
+      params: REASONING_LOW,
     },
     {
-      label: "Cerebras", url: CEREBRAS_URL, model: CEREBRAS_MODEL,
-      key: () => process.env.CEREBRAS_API_KEY,
+      // Different architecture on the same host — the point of multiChat is
+      // cross-validation, and two answers from the same model are not two
+      // opinions. Shares GROQ_API_KEY, so it also shares that key's rate limit.
+      label: "Qwen3", url: GROQ_URL, model: GROQ_QWEN_MODEL,
+      key: () => process.env.GROQ_API_KEY,
+      params: REASONING_NONE,
     },
     {
       label: "NVIDIA", url: NVIDIA_URL, model: NVIDIA_MODEL,
       key: () => process.env.NVIDIA_API_KEY,
+      params: REASONING_LOW,
     },
     {
       label: "OpenRouter", url: OPENROUTER_URL, model: OPENROUTER_MODEL,
       key: () => process.env.OPENROUTER_API_KEY,
       extraHeaders: {
         "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
-        "X-Title":      "2560戰法",
+        // ASCII only. HTTP header values are ByteStrings, so "2560戰法" made
+        // fetch() throw before a request was ever sent — meaning OpenRouter has
+        // never once succeeded since it was added in 1d13c38, and neither has the
+        // DeepSeek gather entry from 56b4347. Both looked like provider outages.
+        "X-Title":      "2560",
       },
     },
     {
-      label: "DeepSeek-R1", url: OPENROUTER_URL, model: DEEPSEEK_MODEL,
+      label: "MiniMax", url: OPENROUTER_URL, model: OPENROUTER_ALT_MODEL,
       key: () => process.env.OPENROUTER_API_KEY,
       gatherOnly: true,
       extraHeaders: {
         "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
-        "X-Title":      "2560戰法",
+        // ASCII only. HTTP header values are ByteStrings, so "2560戰法" made
+        // fetch() throw before a request was ever sent — meaning OpenRouter has
+        // never once succeeded since it was added in 1d13c38, and neither has the
+        // DeepSeek gather entry from 56b4347. Both looked like provider outages.
+        "X-Title":      "2560",
       },
     },
   ].filter(p => !!p.key())
@@ -155,7 +194,7 @@ export async function chat(userMsg: string): Promise<string> {
 
   for (const p of providers) {
     try {
-      return await callProvider(p.label, p.url, p.key()!, p.model, userMsg, 500, p.extraHeaders)
+      return await callProvider(p.label, p.url, p.key()!, p.model, userMsg, 500, p.extraHeaders, p.params)
     } catch (err) {
       console.warn(`[ai] ${p.label} failed:`, (err as Error).message)
     }
@@ -171,10 +210,17 @@ export async function chat(userMsg: string): Promise<string> {
 const GATHER_MS = 13_000
 
 export async function multiChat(userMsg: string, maxTokens = 1000): Promise<string> {
-  const providers = getProviders()
+  // Cross-validation only means something if the drafts come from different
+  // models. Groq and NVIDIA both serve openai/gpt-oss-120b, so without this the
+  // synthesis would read two outputs of one model as two agreeing opinions and
+  // report inflated consensus. Keep the first provider for each distinct model
+  // (they are ordered fastest-first); the others stay available to chat()'s
+  // sequential fallback and to the synthesis step.
+  const seen = new Set<string>()
+  const providers = getProviders().filter(p => !seen.has(p.model) && seen.add(p.model))
   if (providers.length === 0) throw new Error("未設定 AI API 金鑰")
   if (providers.length === 1) {
-    return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, maxTokens, providers[0].extraHeaders)
+    return callProvider(providers[0].label, providers[0].url, providers[0].key()!, providers[0].model, userMsg, maxTokens, providers[0].extraHeaders, providers[0].params)
   }
 
   // Gather phase: each provider gets a capped token budget to respond quickly.
@@ -185,7 +231,7 @@ export async function multiChat(userMsg: string, maxTokens = 1000): Promise<stri
   // captures whatever finishes within 13s without waiting for all to complete.
   const ok: { label: string; text: string }[] = []
   const tasks = providers.map(p =>
-    callProvider(p.label, p.url, p.key()!, p.model, userMsg, DRAFT_TOKENS, p.extraHeaders)
+    callProvider(p.label, p.url, p.key()!, p.model, userMsg, DRAFT_TOKENS, p.extraHeaders, p.params)
       .then(text => { ok.push({ label: p.label, text }) })
       .catch(err  => { console.warn(`[ai] ${p.label} failed:`, (err as Error).message) })
   )
@@ -223,7 +269,7 @@ ${perspectives}
       ?? providers.find(p => ok.find(r => r.label === p.label))
     )!
     const final = await callProvider(
-      `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, maxTokens, synth.extraHeaders
+      `${synth.label}(synthesis)`, synth.url, synth.key()!, synth.model, synthPrompt, maxTokens, synth.extraHeaders, synth.params
     )
     console.log(`[ai] synthesis via ${synth.label}`)
     return final
