@@ -12,7 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach } from "vitest"
-import { resolveSymbol, resolveTwSuffix, clearSymbolMemo } from "../src/utils/symbol.js"
+import { resolveSymbol, resolveSymbolForRead, resolveTwSuffix, clearSymbolMemo } from "../src/utils/symbol.js"
 import { getAdapter } from "../src/adapters/index.js"
 
 /** Probe stub: `listed` are found, `unknown` answer null (could not tell). */
@@ -98,6 +98,70 @@ describe("resolveSymbol", () => {
     // Probed again rather than served from the memo — and only .TW each time,
     // because an inconclusive TWSE answer short-circuits before TPEx.
     expect(p.calls).toEqual(["4444.TW", "4444.TW"])
+  })
+})
+
+/**
+ * The read paths (public chart / backtest / AI routes) take the symbol from the
+ * URL and then use it as the OhlcvCache key. Reproduced against production on
+ * 2026-09-08: one `GET /api/chart/2330` recreated 66 cache rows under the bare
+ * key, hours after the migration had merged them into `2330.TW`. Every
+ * notification sent before v1.7.0 carries a `?symbol=2330` deep link and those
+ * messages are still in the user's chat history, so this is a live path.
+ */
+describe("resolveSymbolForRead", () => {
+  beforeEach(() => clearSymbolMemo())
+
+  it("canonicalises a bare code so a URL cannot recreate the alias", async () => {
+    const p = probeOf(["2330.TW"])
+    expect(await resolveSymbolForRead("2330", p.fn)).toEqual({ symbol: "2330.TW", assetType: "stock" })
+  })
+
+  it("corrects a wrong suffix arriving from a URL", async () => {
+    const p = probeOf(["5230.TWO"])
+    expect((await resolveSymbolForRead("5230.TW", p.fn)).symbol).toBe("5230.TWO")
+  })
+
+  it("falls back to the RAW input when the source is unreachable — a chart must still render", async () => {
+    // Not the best guess: the raw form is what fetchOHLCV handles best (it has
+    // its own .TW→.TWO fallback), whereas persisting a wrong guess would create
+    // exactly the alias this function exists to prevent.
+    const p = probeOf([], ["2330.TW", "2330.TWO"])
+    expect((await resolveSymbolForRead("2330", p.fn)).symbol).toBe("2330")
+  })
+
+  it("leaves US tickers and crypto pairs untouched, and never probes for them", async () => {
+    const p = probeOf([])
+    expect(await resolveSymbolForRead("aapl", p.fn)).toEqual({ symbol: "AAPL", assetType: "stock" })
+    expect(await resolveSymbolForRead("BTCUSDT", p.fn)).toEqual({ symbol: "BTCUSDT", assetType: "crypto" })
+    expect(p.calls).toEqual([])
+  })
+})
+
+describe("resolveTwSuffix — probe the suffix the caller already typed first", () => {
+  it("a .TWO input costs ONE probe, not a wasted .TW round trip first", async () => {
+    const p = probeOf(["5230.TWO"])
+    expect(await resolveTwSuffix("5230", p.fn, "TWO")).toEqual({ symbol: "5230.TWO", resolved: true })
+    expect(p.calls).toEqual(["5230.TWO"])
+  })
+
+  it("still finds the other exchange when the typed suffix is wrong", async () => {
+    const p = probeOf(["5230.TWO"])
+    expect(await resolveTwSuffix("5230", p.fn, "TW")).toEqual({ symbol: "5230.TWO", resolved: true })
+    expect(p.calls).toEqual(["5230.TW", "5230.TWO"])
+  })
+
+  it("an inconclusive FIRST probe still refuses to name the other exchange", async () => {
+    const p = probeOf(["5230.TW"], ["5230.TWO"])
+    expect((await resolveTwSuffix("5230", p.fn, "TWO")).resolved).toBe(false)
+    expect(p.calls).toEqual(["5230.TWO"])
+  })
+
+  it("resolveSymbol takes the preference from the input's own suffix", async () => {
+    clearSymbolMemo()
+    const p = probeOf(["3176.TWO"])
+    expect((await resolveSymbol("3176.TWO", p.fn)).symbol).toBe("3176.TWO")
+    expect(p.calls).toEqual(["3176.TWO"])   // no wasted .TW probe
   })
 })
 

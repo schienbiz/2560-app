@@ -46,34 +46,44 @@ export interface ResolvedSymbol {
   resolved:  boolean
 }
 
+export type TwSuffix = "TW" | "TWO"
+
 /**
  * Pure suffix resolution for a 4-digit Taiwan code, given a probe.
  *
- * Tries TWSE (.TW) first — the large majority of codes — then TPEx (.TWO).
- * A null (inconclusive) probe is never treated as a "no": if .TW is unknown we
- * do NOT fall through and declare the stock OTC, because a rate-limited .TW
- * request would then permanently mislabel a TWSE listing.
+ * Order: `prefer` first (default TWSE — the large majority of codes), then the
+ * other exchange. When the caller already typed a suffix, preferring it turns
+ * the common case into ONE probe instead of two; without that, every OTC symbol
+ * on the chart path would pay a wasted .TW round trip before the .TWO hit.
+ *
+ * A null (inconclusive) FIRST probe is never treated as a "no": if it is
+ * unknown we do NOT fall through and declare the other exchange, because a
+ * rate-limited request would then permanently mislabel the listing.
  */
 export async function resolveTwSuffix(
   code: string,
-  probe: ProbeFn
+  probe: ProbeFn,
+  prefer: TwSuffix = "TW"
 ): Promise<{ symbol: string; resolved: boolean }> {
-  const tw = await probe(`${code}.TW`)
-  if (tw === true) return { symbol: `${code}.TW`, resolved: true }
+  const other: TwSuffix = prefer === "TW" ? "TWO" : "TW"
 
-  // Inconclusive is NOT a "no". Falling through to .TWO here would let a
-  // rate-limited or timed-out .TW request file a TWSE listing as OTC — and a
-  // wrong suffix is permanent once it is written to a watchlist row, a cache
-  // key and a signal-history key.
-  if (tw === null) return { symbol: `${code}.TW`, resolved: false }
+  const first = await probe(`${code}.${prefer}`)
+  if (first === true) return { symbol: `${code}.${prefer}`, resolved: true }
 
-  const two = await probe(`${code}.TWO`)
-  if (two === true) return { symbol: `${code}.TWO`, resolved: true }
+  // Inconclusive is NOT a "no". Falling through here would let a rate-limited
+  // or timed-out request file a TWSE listing as OTC — and a wrong suffix is
+  // permanent once written to a watchlist row, a cache key and a
+  // signal-history key.
+  if (first === null) return { symbol: `${code}.${prefer}`, resolved: false }
 
-  // .TW said a definitive no and .TWO did not confirm: probably OTC and
-  // unreachable, or the code does not exist. Report the guess for display but
-  // mark it unresolved so nothing persists it.
-  return { symbol: `${code}.TWO`, resolved: false }
+  const second = await probe(`${code}.${other}`)
+  if (second === true) return { symbol: `${code}.${other}`, resolved: true }
+
+  // The preferred exchange said a definitive no and the other did not confirm:
+  // probably listed on the other one but unreachable, or the code does not
+  // exist. Report the guess for display but mark it unresolved so nothing
+  // persists it.
+  return { symbol: `${code}.${other}`, resolved: false }
 }
 
 const _memo = new Map<string, string>()   // raw upper → canonical (successes only)
@@ -102,15 +112,52 @@ export async function resolveSymbol(raw: string, probe?: ProbeFn): Promise<Resol
     return { symbol: upper, assetType: "crypto", resolved: true }
   }
 
-  const twCode = TW_BARE.test(upper) ? upper : TW_SUFFIXED.exec(upper)?.[1]
+  const suffixed = TW_SUFFIXED.exec(upper)
+  const twCode = TW_BARE.test(upper) ? upper : suffixed?.[1]
   if (!twCode) {
     // US ticker (or any other exchange suffix the user gave explicitly) —
     // nothing to disambiguate.
     return { symbol: upper, assetType: "stock", resolved: true }
   }
 
+  // Check the suffix the caller already typed first. It is usually right, so
+  // this is one probe instead of two on the hot path — and when it is wrong
+  // (a `.TW` row for an OTC stock) the other exchange is still tried.
+  const prefer = (suffixed?.[2] as TwSuffix | undefined) ?? "TW"
+
   const probeFn: ProbeFn = probe ?? (s => adapter.probe?.(s) ?? Promise.resolve(null))
-  const { symbol, resolved } = await resolveTwSuffix(twCode, probeFn)
+  const { symbol, resolved } = await resolveTwSuffix(twCode, probeFn, prefer)
   if (resolved) _memo.set(upper, symbol)
   return { symbol, assetType: "stock", resolved }
+}
+
+/**
+ * Canonical symbol for a READ path — the public chart / backtest / AI routes.
+ *
+ * Those routes take the symbol straight from the URL and then use it as the
+ * OhlcvCache key, so without this an alias regrows the moment anyone asks for
+ * one. Reproduced against production on 2026-09-08: a single
+ * `GET /api/chart/2330` recreated 66 cache rows under the bare key `2330`,
+ * hours after the migration had merged them into `2330.TW`. The exposure is not
+ * hypothetical — notifications sent before v1.7.0 carry a deep link of the form
+ * `?symbol=2330`, and those messages are still sitting in the user's chat
+ * history. Only OhlcvCache is affected (these routes never write Watchlist or
+ * SignalHistory), so it costs duplicate rows and a duplicate upstream fetch
+ * rather than duplicate notifications — but it silently undoes the merge.
+ *
+ * Unlike the write paths this NEVER rejects: a chart must still render when the
+ * data source is unreachable. On an unresolved probe it returns the raw input,
+ * which is also the shape `fetchOHLCV` handles best — it carries its own
+ * .TW→.TWO fallback, whereas a wrong guess would be fetched under a wrong-suffix
+ * key and create precisely the alias this exists to avoid.
+ */
+export async function resolveSymbolForRead(
+  raw: string,
+  probe?: ProbeFn
+): Promise<{ symbol: string; assetType: AssetType }> {
+  const upper = raw.toUpperCase().trim()
+  const r = await resolveSymbol(upper, probe)
+  return r.resolved
+    ? { symbol: r.symbol, assetType: r.assetType }
+    : { symbol: upper, assetType: r.assetType }
 }

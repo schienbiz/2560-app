@@ -10,6 +10,7 @@ import { Hono } from "hono"
 import { authMiddleware } from "../auth.js"
 import { analyzeChart, hasAnyProviderKey, type SignalHistoryEntry } from "../services/ai.js"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbolForRead } from "../utils/symbol.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
 import { computeSR } from "../engine/sr.js"
@@ -28,8 +29,14 @@ aiRouter.post("/analyze/:symbol", async c => {
 
   try {
     const { userId, platform } = c.get("user")
-    const { adapter, normalizedSymbol } = getAdapter(symbol)
-    const assetType = adapter.getAssetType()
+    // Canonicalise first. Two things depend on it: getOrFetchOHLCV writes
+    // OhlcvCache under this key (a bare "2330" from a URL recreates the alias
+    // the migration merged away), and the watchlist lookup below matches on it
+    // — with the un-canonicalised form, `/api/ai/analyze/2330` silently failed
+    // to find the now-"2330.TW" row and analysed the symbol against the default
+    // MA25/60 instead of the periods the user had configured.
+    const { symbol: normalizedSymbol, assetType } = await resolveSymbolForRead(symbol)
+    const { adapter } = getAdapter(normalizedSymbol)
 
     // Use the user's configured MA periods for this symbol (if any)
     const watchlistItem = await db.watchlist.findFirst({
