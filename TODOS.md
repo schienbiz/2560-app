@@ -414,6 +414,15 @@ the reasoning, so they are choices rather than oversights:
 - **A reminder whose push fails is still lost.** v1.7.0 counts the failure and fails the workflow,
   but the row stays `sent:false` and the query only looks at today, so nothing retries or expires
   it. Real fix: a bounded retry window, or an `attempts` column with an expiry.
+- **The public chart/backtest routes are an unauthenticated proxy to Yahoo, and v1.7.1 made
+  each miss slightly more expensive.** A request for a 4-digit code that resolves to nothing
+  now costs up to two probes plus a fetch, and *inconclusive* resolutions are deliberately not
+  memoised (so an outage cannot pin a wrong answer), which means a scan of nonexistent codes
+  re-probes every time. The route already proxied Yahoo unauthenticated before this, so the
+  marginal change is small and the app has one user — but the amplification is real. Fix
+  sketch: have `resolveTwSuffix` distinguish a DEFINITIVE "neither exchange has it" from an
+  inconclusive one, and memoise only the former (that distinction already exists in `ProbeFn`'s
+  false-vs-null, it just isn't plumbed out); or rate-limit the public routes.
 - **`engine/backtest.ts`, `engine/indicators.ts`, `src/auth.ts` and both webhook handlers still
   have no test file.** The 2026-09-07 review found P0 bugs in exactly the untested files; backtest
   is the highest-value gap because its win rate / profit factor / max drawdown go straight to the

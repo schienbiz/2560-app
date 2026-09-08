@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.7.1] — 2026-09-08
+
+v1.7.0 canonicalised symbols on every **write** path but not on the **read** paths, so the
+alias it had just merged away could grow straight back. Reproduced against production, not
+inferred: a single `GET /api/chart/2330` recreated **66 cache rows** under the bare key `2330`,
+hours after the migration had folded them into `2330.TW`.
+
+### Fixed
+
+- **The public read routes now canonicalise before using a symbol as a cache key**
+  (`/api/chart/:symbol`, `/api/signal/:symbol`, `/api/backtest/:symbol`,
+  `/api/ai/analyze/:symbol`). All four take the symbol from the URL and then write
+  `OhlcvCache` under it. The exposure is not theoretical: every notification sent before
+  v1.7.0 carries a deep link of the form `?symbol=2330`, and those messages are still in the
+  user's chat history — one tap regrew the alias. Only `OhlcvCache` was affected (these routes
+  never write `Watchlist` or `SignalHistory`), so the cost was duplicate rows and a duplicate
+  upstream fetch rather than duplicate notifications. Note this was **not a regression in
+  v1.7.0** — `2330` was the key before it too; the fix was simply incomplete.
+- **`/api/ai/analyze/:symbol` was silently analysing with the wrong MA periods.** It matched
+  the watchlist row on the un-canonicalised symbol, so after the migration a request for
+  `2330` no longer found the now-`2330.TW` row and fell back to the default MA25/60 instead of
+  the periods the user had configured. Same one-line cause, found while wiring the above.
+- **`resolveSymbol` now probes the suffix the caller already typed first.** Without it every
+  OTC symbol on the chart path would pay a wasted `.TW` round trip before the `.TWO` hit —
+  the fix above would have added two probes to the hot path instead of one. A wrong typed
+  suffix still falls through to the other exchange, and an inconclusive FIRST probe still
+  refuses to name the other one (a rate-limited request must never mislabel a listing).
+
+`resolveSymbolForRead` deliberately never rejects — a chart has to render even when the data
+source is unreachable — and on an unresolved probe returns the RAW input rather than a guess,
+because the raw form is what `fetchOHLCV` handles best (it carries its own `.TW`→`.TWO`
+fallback) whereas persisting a guess would create exactly the alias this prevents.
+
+225 tests (+8), `tsc --noEmit` clean; both new behaviours confirmed by mutation testing.
+
 ## [1.7.0] — 2026-09-07
 
 窮盡式審視的修復批次。每一項都以生產 Neon 唯讀查詢、真實 API 探測或實跑驗證，不是

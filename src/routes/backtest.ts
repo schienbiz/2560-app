@@ -10,6 +10,7 @@
 
 import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbolForRead } from "../utils/symbol.js"
 import { getOrFetchOHLCV } from "../utils/ohlcv.js"
 import { runBacktest } from "../engine/backtest.js"
 import { hasSufficientBars } from "../engine/signal.js"
@@ -23,8 +24,11 @@ backtestRouter.get("/:symbol", async c => {
   const slowPeriod = Math.min(Math.max(parseInt(c.req.query("slow_period") ?? "60", 10), 3), 200)
 
   try {
-    const { adapter, normalizedSymbol } = getAdapter(symbol)
-    const assetType = adapter.getAssetType()
+    // Canonicalise before the symbol becomes a cache key: getOrFetchOHLCV
+    // writes OhlcvCache under it, so a bare "2330" from a URL would recreate
+    // the alias the migration merged away (see resolveSymbolForRead).
+    const { symbol: normalizedSymbol, assetType } = await resolveSymbolForRead(symbol)
+    const { adapter } = getAdapter(normalizedSymbol)
     const ohlcv     = await getOrFetchOHLCV(normalizedSymbol, assetType, days, adapter)
 
     if (!hasSufficientBars(ohlcv.length, slowPeriod)) {

@@ -11,6 +11,7 @@
 
 import { Hono } from "hono"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbolForRead } from "../utils/symbol.js"
 import { getCachedOHLCV, upsertOHLCV } from "../cache.js"
 import { computeMA } from "../engine/index.js"
 import { scoreSignal, hasSufficientBars } from "../engine/signal.js"
@@ -27,8 +28,12 @@ chartRouter.get("/chart/:symbol", async c => {
   const slowPeriod = Math.min(Math.max(parseInt(c.req.query("slow_period") ?? "60", 10), 3), 200)
 
   try {
-    const { adapter, normalizedSymbol } = getAdapter(symbol)
-    const assetType = adapter.getAssetType()
+    // Canonicalise BEFORE the symbol is used as a cache key. This handler takes
+    // the symbol from the URL and writes OhlcvCache under it, so a bare "2330"
+    // — the shape every pre-v1.7.0 notification deep link still carries —
+    // recreates the alias the migration merged away.
+    const { symbol: normalizedSymbol, assetType } = await resolveSymbolForRead(symbol)
+    const { adapter } = getAdapter(normalizedSymbol)
 
     // Try cache first
     let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, days)
@@ -83,8 +88,9 @@ chartRouter.get("/chart/:symbol", async c => {
 chartRouter.get("/signal/:symbol", async c => {
   const symbol = c.req.param("symbol").toUpperCase()
   try {
-    const { adapter, normalizedSymbol } = getAdapter(symbol)
-    const assetType = adapter.getAssetType()
+    // Same cache-key canonicalisation as /chart/:symbol above.
+    const { symbol: normalizedSymbol, assetType } = await resolveSymbolForRead(symbol)
+    const { adapter } = getAdapter(normalizedSymbol)
 
     let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 90)
     if (!ohlcv) {
