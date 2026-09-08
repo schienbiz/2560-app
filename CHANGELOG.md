@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.7.2] — 2026-09-08
+
+### Tests
+
+- **`engine/backtest.ts` now has a test file** — 23 cases. It had none, while producing the win
+  rate, profit factor, max drawdown and by-confidence table the user reads straight off the app,
+  and the 2026-09-07 review found its P0 bugs concentrated in exactly the untested files.
+  Every fixture is MA2/MA3 on a short series so each expected value is worked out by hand in the
+  assertion (`(15−12)/12 = +25%`, equity `1 × 1.25 × 0.60 = 0.75`, drawdown
+  `(1.25−0.75)/1.25 = 40%`) rather than pinning whatever the code happened to emit.
+- **12 of 12 mutants killed.** The suite passed on its first run against previously-untested
+  code, which is the classic shape of a suite that tests nothing — so it was checked by mutating
+  the engine: inverted profit factor, drawdown measured from 1.0 instead of the peak, equity
+  added instead of compounded, confidence thresholds shifted, volume read at the wrong bar,
+  return sign flipped, the bar guard relaxed, the loop start moved. **One survived on the first
+  pass** — dropping the no-pyramiding guard — because that test's series contained only one
+  golden cross, so removing the guard changed nothing. Replaced with a series where the fast MA
+  touches the slow one and turns back up (`isGolden` accepts `<=`, `isDeath` needs a strict `<`),
+  which is a second entry signal with the position still open; the mutant now dies.
+
+### Changed
+
+- `engine/backtest.ts` gained a comment explaining why the loop starts at `slowPeriod + 1`:
+  it keeps the slow MA's very first value out of the `previous` slot. The cost — a genuine cross
+  at index `slowPeriod` is never taken, so a backtest can miss one signal the live scanner would
+  act on — was undocumented. No behaviour change.
+
+Three reporting quirks the tests surfaced are recorded in TODOS rather than silently fixed, since
+each moves numbers the user has already seen: `profit_factor`/`expectancy` returning `null` for
+both "infinite" and "no trades"; the skipped first cross above; and `by_confidence` grading a
+short-history cross lower than the live engine (only reachable via the custom short periods the
+route allows — the default 25/60 always has all four factors).
+
+248 tests, `tsc --noEmit` clean.
+
 ## [1.7.1] — 2026-09-08
 
 v1.7.0 canonicalised symbols on every **write** path but not on the **read** paths, so the
