@@ -24,6 +24,7 @@
 
 import type { MarketAdapter } from "./interface.js"
 import type { OHLCV } from "../engine/types.js"
+import { fetchWithRetry } from "./http.js"
 
 const BASE      = "https://query1.finance.yahoo.com/v8/finance/chart"
 const TWSE_BASE = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
@@ -108,11 +109,28 @@ function daysToRange(days: number): string {
 
 export class YahooFinanceAdapter implements MarketAdapter {
   getAssetType() { return "stock" as const }
+  getSource()    { return "yahoo" }
 
   async validateSymbol(symbol: string): Promise<boolean> {
     // Accept any symbol that looks reasonable (letters, digits, dots, hyphens)
     // Avoids an external API call that may be blocked or rate-limited on some hosting environments
     return /^[A-Z0-9.\-]{1,20}$/.test(symbol.toUpperCase())
+  }
+
+  /**
+   * Does Yahoo actually serve daily bars for this exact symbol?
+   *
+   * Used by utils/symbol.ts to decide .TW vs .TWO before a symbol is persisted.
+   * Cheap (range=5d) and never throws — an unreachable Yahoo answers "unknown"
+   * (null), which the caller must distinguish from a definitive "no" (false),
+   * or a network blip would canonicalise a TWSE stock as OTC.
+   */
+  async probe(symbol: string): Promise<boolean | null> {
+    try {
+      return (await this._tryFetch(symbol, 5)) !== null
+    } catch {
+      return null
+    }
   }
 
   async fetchOHLCV(symbol: string, days: number): Promise<OHLCV[]> {
@@ -203,23 +221,39 @@ export class YahooFinanceAdapter implements MarketAdapter {
     }
   }
 
+  /**
+   * One symbol attempt. Returns null for "this symbol has no daily bars here"
+   * and THROWS for "could not find out" (rate limit, gateway fault, network).
+   *
+   * The distinction is load-bearing. `fetchOHLCV` and `probe` both treat null
+   * as a definitive miss and move on to the .TWO candidate; if a throttled
+   * response also read as null, a TWSE symbol whose .TW request happened to be
+   * rate-limited would resolve as OTC and be persisted under the wrong
+   * exchange. Verified against live Yahoo: a wrong-exchange symbol answers 404
+   * (2330.TWO, 5230.TW), but 8215.TWO answers HTTP 200 with an EMPTY bar
+   * array — so "200" alone is not evidence of a listing, and the old code's
+   * `if (bars) return bars` accepted that empty array as success (`[]` is
+   * truthy) and never tried the other exchange.
+   */
   private async _tryFetch(symbol: string, days: number): Promise<OHLCV[] | null> {
     const range = daysToRange(days)
     const url = `${BASE}/${encodeURIComponent(symbol)}?interval=1d&range=${range}`
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!res.ok) return null
+    const res = await fetchWithRetry(url, { headers: { "User-Agent": "Mozilla/5.0" }, timeoutMs: 8_000 })
+
+    // 404 (and Yahoo's 400 for a malformed ticker) = definitive "not here".
+    if (res.status === 404 || res.status === 400) return null
+    if (!res.ok) throw new Error(`Yahoo fetch failed: ${res.status} ${symbol}`)
 
     const json = await res.json() as YahooResponse
     const result = json.chart?.result?.[0]
     if (!result) return null
 
-    const { timestamp, indicators } = result
-    const quote = indicators.quote[0]
+    const timestamp = result.timestamp
+    const quote     = result.indicators?.quote?.[0]
+    if (!Array.isArray(timestamp) || !quote) return null
 
-    return normalizeYahooBars(timestamp, quote, days)
+    const bars = normalizeYahooBars(timestamp, quote, days)
+    return bars.length > 0 ? bars : null
   }
 }
 
@@ -233,13 +267,16 @@ interface TwseResponse {
   }>
 }
 
+// `timestamp` / `indicators` are optional on purpose: Yahoo answers 200 with a
+// result object carrying neither for a symbol it knows nothing about (observed
+// on 8215.TWO). Typing them as required made the old destructuring look safe.
 export interface YahooResponse {
   chart: {
     result?: Array<{
       meta?: { regularMarketPrice?: number }
-      timestamp: number[]
-      indicators: {
-        quote: Array<{
+      timestamp?: number[]
+      indicators?: {
+        quote?: Array<{
           open:   (number | null)[]
           high:   (number | null)[]
           low:    (number | null)[]

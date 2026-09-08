@@ -10,9 +10,11 @@
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
-import { getCachedOHLCV } from "../src/cache.js"
-import { morningInsight, type SignalHistoryEntry } from "../src/services/ai.js"
+import { getCachedOHLCVByBarAge } from "../src/cache.js"
+import { fetchDaysFor } from "../src/utils/ohlcv.js"
+import { morningInsight, hasAnyProviderKey, type SignalHistoryEntry } from "../src/services/ai.js"
 import { pushLine, pushTelegram } from "./notify.js"
+import { fmtPrice } from "./scan.js"
 import type { ChartData } from "../src/engine/types.js"
 
 async function push(platform: string, userId: string, msg: string) {
@@ -21,11 +23,9 @@ async function push(platform: string, userId: string, msg: string) {
 }
 
 export async function runMorningSummary() {
-  const hasKey = process.env.GROQ_API_KEY || process.env.CEREBRAS_API_KEY ||
-                 process.env.NVIDIA_API_KEY || process.env.OPENROUTER_API_KEY
-  if (!hasKey) {
+  if (!hasAnyProviderKey()) {
     console.log("No AI API key set — skipping morning summary")
-    return
+    return { users: 0, symbols: 0, failed: 0, skipped: "no-ai-key" as const }
   }
 
   const alerts = await db.watchlistAlert.findMany({
@@ -68,6 +68,9 @@ export async function runMorningSummary() {
 
   let totalUsers = 0
   let totalSymbolsSent = 0
+  // Counted and returned, not just logged: the /internal endpoint reports it so
+  // the GitHub workflow can fail on a run where every push was rejected.
+  let failedPushes = 0
 
   for (const [, userAlerts] of byUser) {
     const { user_id, platform } = userAlerts[0].watchlist
@@ -78,10 +81,14 @@ export async function runMorningSummary() {
       const slowPeriod = alert.slow_period
       const { normalizedSymbol } = getAdapter(watchlist.symbol)
 
-      // Fetch enough history for the configured slow period
-      const minBars = slowPeriod + 30
-      const cacheDays = Math.max(120, Math.ceil(minBars * (watchlist.asset_type === "crypto" ? 1 : 1.45)))
-      const ohlcv = await getCachedOHLCV(normalizedSymbol, watchlist.asset_type, cacheDays)
+      // Enough history for the configured slow period. Uses the shared
+      // fetchDaysFor rather than a second hand-rolled 1.45 conversion — the
+      // real ratio is TRADING_TO_CALENDAR (1.4484) and two copies drift.
+      const cacheDays = Math.max(120, fetchDaysFor(slowPeriod, watchlist.asset_type))
+      // Bar-age freshness, NOT fetch-age. This cron deliberately never fetches
+      // (00:00 UTC is a Render cold start), and the fetch-age rule made crypto
+      // permanently invisible here — see getCachedOHLCVByBarAge.
+      const ohlcv = await getCachedOHLCVByBarAge(normalizedSymbol, watchlist.asset_type, cacheDays)
       if (!ohlcv || !hasSufficientBars(ohlcv.length, slowPeriod)) return null
 
       const closes = ohlcv.map(b => b.close)
@@ -114,7 +121,11 @@ export async function runMorningSummary() {
       // able to see the advice is based on the previous close, not a live tick.
       const lastBar  = ohlcv[ohlcv.length - 1]
       const sigBadge = signal === "golden_cross" ? "🟢 黃金交叉" : "🔴 死亡交叉"
-      const fallback = `收盤 ${lastBar.close}，MA${fastPeriod} ${maFast[maFast.length - 1]?.toFixed(2)} / MA${slowPeriod} ${maSlow[maSlow.length - 1]?.toFixed(2)}`
+      // fmtPrice, not the raw float: Yahoo hands back 333.260009765625, which
+      // reads like garbage in a push. (The cross notifications already went
+      // through fmtPrice; this AI-failure fallback line was the one path left
+      // printing the raw value.)
+      const fallback = `收盤 ${fmtPrice(lastBar.close)}，MA${fastPeriod} ${maFast[maFast.length - 1]?.toFixed(2)} / MA${slowPeriod} ${maSlow[maSlow.length - 1]?.toFixed(2)}`
       return `• ${watchlist.label ?? normalizedSymbol} ${sigBadge}（資料至 ${lastBar.date}）\n  ${insight || fallback}`
     }))
 
@@ -132,9 +143,11 @@ export async function runMorningSummary() {
       totalSymbolsSent += lines.length
       console.log(`  ✓ Morning summary → ${user_id} (${platform}), ${lines.length} symbols`)
     } catch (err) {
+      failedPushes++
       console.error(`  ✗ Push failed for ${user_id}:`, err)
     }
   }
 
-  console.log(`Morning summary complete. Sent to ${totalUsers} users, ${totalSymbolsSent} symbols total.`)
+  console.log(`Morning summary complete. Sent to ${totalUsers} users, ${totalSymbolsSent} symbols total, ${failedPushes} push failures.`)
+  return { users: totalUsers, symbols: totalSymbolsSent, failed: failedPushes }
 }

@@ -1,10 +1,14 @@
 /**
  * OHLCV cache layer.
  *
- * Cache strategy:
- *   Stock:  TTL until market close today (4pm local → use end-of-day UTC)
- *           Any cached bar for today's date is fresh until 8am UTC next day.
- *   Crypto: TTL = 15 minutes (market never closes)
+ * Freshness (see isCacheStale for the reasoning behind each number):
+ *   Stock, bar dated today (still forming): 30 minutes
+ *   Stock, settled past day:                until the next 05:30 UTC
+ *   Crypto:                                 15 minutes
+ *
+ * Those answer "must I refetch before trusting this for a SIGNAL?". Reporting
+ * surfaces that deliberately never fetch ask a different question and use
+ * getCachedOHLCVByBarAge / isBarTooOld instead.
  */
 
 import { db } from "./db.js"
@@ -56,23 +60,23 @@ export function isCacheStale(
   return now > cutoff.getTime()
 }
 
-export async function getCachedOHLCV(
-  symbol: string,
-  assetType: AssetType,
-  days: number
-): Promise<OHLCV[] | null> {
+interface CachedRow {
+  date: Date; open: number; high: number; low: number; close: number; volume: number
+  fetched_at: Date
+}
+
+async function readCachedRows(symbol: string, days: number): Promise<CachedRow[] | null> {
   const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
   const rows = await db.ohlcvCache.findMany({
     where: { symbol, date: { gte: cutoff } },
     orderBy: { date: "asc" },
   })
-
   if (rows.length === 0) return null
-
-  const latest = rows[rows.length - 1]
-  if (isCacheStale(latest.date, latest.fetched_at, assetType)) return null
   if (rows.length < Math.min(days, 60)) return null   // not enough history
+  return rows
+}
 
+function toBars(rows: CachedRow[], days: number): OHLCV[] {
   return rows.slice(-days).map(r => ({
     date:   r.date.toISOString().slice(0, 10),
     open:   r.open,
@@ -81,6 +85,59 @@ export async function getCachedOHLCV(
     close:  r.close,
     volume: r.volume,
   }))
+}
+
+export async function getCachedOHLCV(
+  symbol: string,
+  assetType: AssetType,
+  days: number
+): Promise<OHLCV[] | null> {
+  const rows = await readCachedRows(symbol, days)
+  if (!rows) return null
+  const latest = rows[rows.length - 1]
+  if (isCacheStale(latest.date, latest.fetched_at, assetType)) return null
+  return toBars(rows, days)
+}
+
+/**
+ * How old the newest BAR may be before a digest should stop reporting on it.
+ * Seven days clears a Friday close read on the following Monday plus a public
+ * holiday, without letting a genuinely abandoned series be narrated as news.
+ */
+export const DIGEST_MAX_BAR_AGE_DAYS = 7
+
+/** Is the newest bar older than `maxAgeDays`? Pure (inject `now` for tests). */
+export function isBarTooOld(latestBarDate: Date, maxAgeDays: number, now: number = Date.now()): boolean {
+  return now - latestBarDate.getTime() > maxAgeDays * 24 * 60 * 60 * 1000
+}
+
+/**
+ * Read-only cache read for REPORTING surfaces, judged on the newest bar's date
+ * rather than on when the row was written.
+ *
+ * `isCacheStale` answers "must I refetch before trusting this for a signal?" —
+ * the right question for the scan, the wrong one for a digest that deliberately
+ * never fetches. Crypto's rule there is a flat 15-minute TTL, and the morning
+ * summary runs at 00:00 UTC while the crypto scan writes at 01:00 UTC, so the
+ * newest crypto write was ALWAYS ~23 hours old and always judged stale:
+ * `getCachedOHLCV` returned null, every crypto symbol was skipped, and a user
+ * holding BTCUSDT/ETHUSDT (four such watchlist rows in production) was told
+ * 「今天自選股全部平靜」 on a day their coin had crossed.
+ *
+ * What a digest actually needs to know is whether the DATA is recent enough to
+ * describe, which this answers — and the caller still prints 「資料至 {date}」
+ * so the reader sees exactly which close the advice is based on.
+ */
+export async function getCachedOHLCVByBarAge(
+  symbol: string,
+  assetType: AssetType,
+  days: number,
+  maxBarAgeDays: number = DIGEST_MAX_BAR_AGE_DAYS
+): Promise<OHLCV[] | null> {
+  const rows = await readCachedRows(symbol, days)
+  if (!rows) return null
+  if (isBarTooOld(rows[rows.length - 1].date, maxBarAgeDays)) return null
+  return toBars(rows, days)
 }
 
 /**

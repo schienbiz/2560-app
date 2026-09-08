@@ -36,7 +36,7 @@ chartRouter.get("/chart/:symbol", async c => {
     if (!ohlcv) {
       ohlcv = await adapter.fetchOHLCV(normalizedSymbol, days)
       if (ohlcv.length === 0) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 404)
-      await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})  // non-blocking
+      await upsertOHLCV(normalizedSymbol, adapter.getSource(), ohlcv).catch(() => {})  // non-blocking
     }
 
     const closes = ohlcv.map(b => b.close)
@@ -89,7 +89,7 @@ chartRouter.get("/signal/:symbol", async c => {
     let ohlcv = await getCachedOHLCV(normalizedSymbol, assetType, 90)
     if (!ohlcv) {
       ohlcv = await adapter.fetchOHLCV(normalizedSymbol, 90)
-      await upsertOHLCV(normalizedSymbol, assetType, ohlcv).catch(() => {})
+      await upsertOHLCV(normalizedSymbol, adapter.getSource(), ohlcv).catch(() => {})
     }
 
     const closes = ohlcv.map(b => b.close)

@@ -26,8 +26,10 @@ import type { Context }   from "hono"
 import type { AssetType } from "../engine/types.js"
 import { db }              from "../db.js"
 import { getAdapter }      from "../adapters/index.js"
-import { chatWithContext } from "../services/ai.js"
+import { resolveSymbol }   from "../utils/symbol.js"
+import { chatWithContext, hasAnyProviderKey } from "../services/ai.js"
 import { getUserContext }  from "../services/bot-context.js"
+import { clampMessage, TELEGRAM_TEXT_LIMIT } from "../utils/message.js"
 import { timingSafeEqual } from "crypto"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,21 +43,56 @@ interface TgUpdate  { update_id: number; message?: TgMessage }
 const APP_URL   = process.env.APP_URL ?? "https://two560-app.onrender.com"
 const PULSE_URL = `${APP_URL}/pulse`
 
-async function sendMessage(chatId: number, text: string, replyMarkup?: object) {
+/**
+ * Escape text that will be interpolated into a `parse_mode: "HTML"` message.
+ *
+ * Measured against the live Bot API (2026-09-07): a message containing a bare
+ * `<` is rejected with
+ *   400 Bad Request: can't parse entities: Unsupported start tag "50"
+ * and the rejection happens BEFORE the chat is even looked up, so the whole
+ * message is lost. `&` and `>` parse fine, but they are escaped too because
+ * `&lt;` in source text must survive round-tripping.
+ */
+export function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+/**
+ * Send a Telegram message.
+ *
+ * HTML parsing is OPT-IN. Free-form text — anything an LLM wrote, anything a
+ * user typed — goes out as plain text, because one `<` in it (an AI writing
+ * "RSI<50" is entirely ordinary) turns the whole push into a 400 and the user
+ * receives nothing at all. Only the curated command replies below, whose
+ * interpolations are escaped, ask for `html: true`.
+ *
+ * The response IS checked: this used to be a bare `await fetch(...)`, so a 400
+ * produced no throw, no log and no message — a silent hole with no symptom.
+ */
+async function sendMessage(
+  chatId: number,
+  text: string,
+  opts: { replyMarkup?: object; html?: boolean } = {}
+) {
   const token = process.env.TELEGRAM_BOT_TOKEN
   if (!token) return
 
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method:  "POST",
     signal:  AbortSignal.timeout(10_000),
     headers: { "Content-Type": "application/json" },
     body:    JSON.stringify({
-      chat_id:      chatId,
-      text,
-      parse_mode:   "HTML",
-      ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      chat_id: chatId,
+      text:    clampMessage(text, TELEGRAM_TEXT_LIMIT),
+      ...(opts.html ? { parse_mode: "HTML" } : {}),
+      ...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
     }),
   })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    console.error(`[tg-webhook] sendMessage ${res.status}: ${body.slice(0, 200)}`)
+  }
 }
 
 // ─── Watchlist commands ───────────────────────────────────────────────────────
@@ -69,15 +106,21 @@ async function handleWatch(chatId: number, rawSymbol: string) {
   let normalizedSymbol: string
   let assetType: AssetType
   try {
-    const result = getAdapter(rawSymbol)
-    normalizedSymbol = result.normalizedSymbol
-    assetType        = result.adapter.getAssetType()
-
-    const valid = await result.adapter.validateSymbol(normalizedSymbol)
+    const { adapter } = getAdapter(rawSymbol)
+    const valid = await adapter.validateSymbol(rawSymbol.toUpperCase().trim())
     if (!valid) {
       await sendMessage(chatId, `找不到標的「${rawSymbol}」，請確認代碼是否正確。`)
       return
     }
+    // Canonicalise before writing, so "/追蹤 2330" and the Mini App's "2330.TW"
+    // land on ONE watchlist row, one cache key and one signal-history key.
+    const resolved = await resolveSymbol(rawSymbol)
+    if (!resolved.resolved) {
+      await sendMessage(chatId, `暫時無法確認「${rawSymbol}」是上市還是上櫃，請稍後再試一次。`)
+      return
+    }
+    normalizedSymbol = resolved.symbol
+    assetType        = resolved.assetType
   } catch {
     await sendMessage(chatId, `找不到標的「${rawSymbol}」，請確認代碼是否正確。`)
     return
@@ -104,7 +147,8 @@ async function handleWatch(chatId: number, rawSymbol: string) {
   })
 
   await sendMessage(chatId,
-    `✅ 已加入追蹤：<b>${normalizedSymbol}</b>\n\n黃金交叉、死亡交叉、接近進場區時會主動通知你。`
+    `✅ 已加入追蹤：<b>${escapeHtml(normalizedSymbol)}</b>\n\n黃金交叉、死亡交叉、接近進場區時會主動通知你。`,
+    { html: true }
   )
 }
 
@@ -117,8 +161,15 @@ async function handleUnwatch(chatId: number, rawSymbol: string) {
   const userId = String(chatId)
   const sym    = rawSymbol.toUpperCase().trim()
 
+  // Accept what the user typed OR the canonical form: rows are now stored as
+  // "5230.TWO", but "/移除 5230" has to keep working — and it must still find
+  // a legacy row saved under the bare code if one is left.
+  const candidates = new Set([sym])
+  const resolved = await resolveSymbol(sym).catch(() => null)
+  if (resolved) candidates.add(resolved.symbol)
+
   const item = await db.watchlist.findFirst({
-    where: { user_id: userId, platform: "telegram", symbol: sym },
+    where: { user_id: userId, platform: "telegram", symbol: { in: [...candidates] } },
   })
   if (!item) {
     await sendMessage(chatId, `「${sym}」不在你的自選清單中。`)
@@ -126,7 +177,7 @@ async function handleUnwatch(chatId: number, rawSymbol: string) {
   }
 
   await db.watchlist.delete({ where: { id: item.id } })
-  await sendMessage(chatId, `🗑 已移除追蹤：<b>${sym}</b>`)
+  await sendMessage(chatId, `🗑 已移除追蹤：<b>${escapeHtml(item.symbol)}</b>`, { html: true })
 }
 
 async function handleList(chatId: number) {
@@ -139,19 +190,23 @@ async function handleList(chatId: number) {
 
   if (items.length === 0) {
     await sendMessage(chatId,
-      "你的自選清單是空的。\n\n用 /追蹤 &lt;代碼&gt; 加入標的，例如：\n/追蹤 2330\n/追蹤 BTCUSDT"
+      "你的自選清單是空的。\n\n用 /追蹤 &lt;代碼&gt; 加入標的，例如：\n/追蹤 2330\n/追蹤 BTCUSDT",
+      { html: true }
     )
     return
   }
 
+  // `label` is free text the user chose — a "<" in it used to 400 the entire
+  // list message, so the user's watchlist simply never arrived.
   const lines = items.map(item => {
     const alert  = item.alert
     const status = alert?.active ? "🔔" : "🔕"
-    return `${status} <b>${item.symbol}</b>${item.label ? ` (${item.label})` : ""}`
+    return `${status} <b>${escapeHtml(item.symbol)}</b>${item.label ? ` (${escapeHtml(item.label)})` : ""}`
   })
 
   await sendMessage(chatId,
-    `📋 你的自選清單（共 ${items.length} 項）：\n\n${lines.join("\n")}\n\n黃金交叉或接近進場區時會自動通知。`
+    `📋 你的自選清單（共 ${items.length} 項）：\n\n${lines.join("\n")}\n\n黃金交叉或接近進場區時會自動通知。`,
+    { html: true }
   )
 }
 
@@ -187,10 +242,13 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
       chatId,
       "👋 歡迎使用 <b>2560 戰法助理</b>！\n\n追蹤 MA 均線交叉訊號，黃金交叉、死亡交叉、接近進場區時自動通知你。\n\n📊 <b>指令</b>\n/追蹤 &lt;代碼&gt; — 加入自選，收即時通知\n/移除 &lt;代碼&gt; — 移除自選\n/清單 — 查看目前追蹤清單\n\n💬 也可以直接問我問題：\n• 2330 現在可以進場嗎？\n• BTCUSDT 趨勢怎麼看？",
       {
-        inline_keyboard: [
-          [{ text: "📈 開啟 2560 App", web_app: { url: APP_URL } }],
-          [{ text: "📡 信號雷達（公開）", web_app: { url: PULSE_URL } }],
-        ],
+        html: true,
+        replyMarkup: {
+          inline_keyboard: [
+            [{ text: "📈 開啟 2560 App", web_app: { url: APP_URL } }],
+            [{ text: "📡 信號雷達（公開）", web_app: { url: PULSE_URL } }],
+          ],
+        },
       }
     )
     return c.json({ ok: true })
@@ -202,9 +260,11 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
       chatId,
       "📡 2560信號雷達\n\n追蹤 MA25/MA60 黃金交叉熱門標的：",
       {
-        inline_keyboard: [[
-          { text: "開啟信號雷達", web_app: { url: PULSE_URL } },
-        ]],
+        replyMarkup: {
+          inline_keyboard: [[
+            { text: "開啟信號雷達", web_app: { url: PULSE_URL } },
+          ]],
+        },
       }
     )
     return c.json({ ok: true })
@@ -231,7 +291,7 @@ export async function handleTelegramWebhook(c: Context): Promise<Response> {
   }
 
   // ── AI fallback ─────────────────────────────────────────────────────────────
-  if (!process.env.GROQ_API_KEY && !process.env.NVIDIA_API_KEY) return c.json({ ok: true })
+  if (!hasAnyProviderKey()) return c.json({ ok: true })
 
   // Async — respond before Telegram's 5s timeout
   setImmediate(async () => {

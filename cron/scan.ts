@@ -15,6 +15,7 @@ import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal, hasSufficientBars, formatStrongDeathLine, FACTOR_COUNT } from "../src/engine/index.js"
 import { getOrFetchOHLCV, fetchDaysFor } from "../src/utils/ohlcv.js"
+import { claimNotification, releaseNotification } from "../src/utils/notify-dedup.js"
 import { evaluateStrongDeath, getMarket } from "../src/utils/strong-death.js"
 import type { MarketBucket } from "../src/utils/strong-death.js"
 import { notifyInsight } from "../src/services/ai.js"
@@ -77,7 +78,32 @@ async function push(platform: string, userId: string, msg: string) {
   else await pushTelegram(userId, msg)
 }
 
-export async function runScan(markets?: Market[]) {
+export interface ScanRunResult {
+  /** Alerts selected for this market bucket. */
+  alerts: number
+  /** Distinct symbols the scan had to price. */
+  symbols: number
+  /** Notifications actually delivered. */
+  notified: number
+  /**
+   * Symbols whose bars could not be obtained AT ALL this run.
+   *
+   * This is the number that matters. The scan reads each symbol once a day and
+   * `scoreSignal(..., lookback=1)` only fires on the LAST bar's transition, so
+   * a symbol missing here does not merely get a late answer: by tomorrow the
+   * cross is no longer the last bar and it is never detected. Until now this
+   * was a lone `console.warn` inside a Promise.allSettled — the endpoint still
+   * returned `{ok:true}` and the workflow still went green, so a day of Yahoo
+   * throttling silently cost signals with no symptom anywhere.
+   */
+  fetchFailed: string[]
+  /** Alerts whose processing threw after the bars were in hand. */
+  alertFailed: number
+  /** Symbols deliberately skipped: too few bars to trust a slow-MA cross. */
+  insufficientData: string[]
+}
+
+export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
   const allAlerts = await db.watchlistAlert.findMany({
     where: { active: true },
     include: { watchlist: true },
@@ -89,7 +115,10 @@ export async function runScan(markets?: Market[]) {
 
   const marketLabel = markets ? ` [${markets.join(",")}]` : ""
   console.log(`Scanning ${alerts.length}/${allAlerts.length} watchlist alerts${marketLabel}...`)
-  if (alerts.length === 0) { console.log("Scan complete."); return }
+  const empty: ScanRunResult = {
+    alerts: 0, symbols: 0, notified: 0, fetchFailed: [], alertFailed: 0, insufficientData: [],
+  }
+  if (alerts.length === 0) { console.log("Scan complete."); return empty }
 
   // ── Pre-fetch 1: OHLCV for each unique symbol (max slow_period across all alerts) ──
   // Avoids fetching the same symbol N times when multiple users watch it.
@@ -107,17 +136,28 @@ export async function runScan(markets?: Market[]) {
     }
   }
 
-  const ohlcvMap = new Map<string, OHLCV[]>()
+  const ohlcvMap    = new Map<string, OHLCV[]>()
+  const fetchFailed: string[] = []
   await Promise.allSettled([...symbolMeta.entries()].map(async ([sym, meta]) => {
-    const { adapter } = getAdapter(sym)
-    const ohlcv = await getOrFetchOHLCV(sym, meta.assetType, meta.maxDays, adapter)
-    if (ohlcv.length > 0) ohlcvMap.set(sym, ohlcv)
+    try {
+      const { adapter } = getAdapter(sym)
+      const ohlcv = await getOrFetchOHLCV(sym, meta.assetType, meta.maxDays, adapter)
+      if (ohlcv.length > 0) ohlcvMap.set(sym, ohlcv)
+      else fetchFailed.push(sym)
+    } catch (err) {
+      fetchFailed.push(sym)
+      console.error(`  ✗ fetch ${sym}: ${(err as Error).message}`)
+    }
   }))
 
   // ── Pre-fetch 2: Fear & Greed once for all crypto alerts (has 1h in-memory cache) ──
   const fearGreed = await fetchFearGreed().catch(() => null)
 
   // ── Process all alerts in parallel ───────────────────────────────────────────────
+  let notified = 0
+  let alertFailed = 0
+  const insufficientData = new Set<string>()
+
   await Promise.allSettled(alerts.map(async alert => {
     const { watchlist } = alert
     const fastPeriod = alert.fast_period
@@ -137,6 +177,7 @@ export async function runScan(markets?: Market[]) {
 
       // Bar guard: skip if insufficient history for the configured slow period
       if (!hasSufficientBars(closes.length, slowPeriod)) {
+        insufficientData.add(normalizedSymbol)
         console.warn(`  ⚠ ${normalizedSymbol} insufficient_data: ${closes.length} bars < ${slowPeriod + 5} needed`)
         return
       }
@@ -169,76 +210,92 @@ export async function runScan(markets?: Market[]) {
       // ── 1. Cross event ──────────────────────────────────────────────────────────
       if (signal !== "none") {
         if (signal === "golden_cross" && alert.on_golden || signal === "death_cross" && alert.on_death) {
-          const alreadySent = await db.signalHistory.findFirst({
-            where: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal },
-          })
+          // Per-USER claim, not a global "has this cross been recorded" check.
+          // The old query hit SignalHistory, which is one row per (symbol, date,
+          // signal) for the whole system — so with two people watching the same
+          // symbol the first one processed took the row and the others were
+          // skipped. Claiming an idempotency key also removes the read-then-
+          // write race the old check depended on to work at all.
+          const key = {
+            userId: watchlist.user_id, platform: watchlist.platform,
+            symbol: normalizedSymbol, signalDate: new Date(latest.date), signal,
+          }
+          const claimed = await claimNotification(key)
 
-          if (!alreadySent) {
-            const crossLabel = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
-            const emoji      = signal === "golden_cross" ? "🟢" : "🔴"
-            const confLabel  = confidence === "high" ? " 高信心度" : ""
-            const arrow      = signal === "golden_cross" ? "↑" : "↓"
+          if (claimed) {
+            try {
+              const crossLabel = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
+              const emoji      = signal === "golden_cross" ? "🟢" : "🔴"
+              const confLabel  = confidence === "high" ? " 高信心度" : ""
+              const arrow      = signal === "golden_cross" ? "↑" : "↓"
 
-            // Use pre-fetched Fear & Greed (already cached)
-            let sentiment: SentimentResult | undefined
-            if (fearGreed && assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
-              sentiment = scoreFearGreed(fearGreed, signal)
+              // Use pre-fetched Fear & Greed (already cached)
+              let sentiment: SentimentResult | undefined
+              if (fearGreed && assetType === "crypto" && (signal === "golden_cross" || signal === "death_cross")) {
+                sentiment = scoreFearGreed(fearGreed, signal)
+              }
+
+              // Strong-death evaluation runs concurrently with the AI insight call
+              const [insight, strongDeath] = await Promise.all([
+                notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment),
+                signal === "death_cross"
+                  ? evaluateStrongDeath(normalizedSymbol, assetType, slowPeriod, getMarket(assetType, normalizedSymbol), latest.date)
+                  : Promise.resolve(null),
+              ])
+              // 83% precision claim only for the backtested MA25/60 configuration
+              const strongLine = strongDeath
+                ? formatStrongDeathLine(strongDeath, fastPeriod === 25 && slowPeriod === 60)
+                : null
+
+              // RSI + MACD summary line
+              const rsiStr  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
+              const macdStr = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
+              const indLine = [rsiStr, macdStr].filter(Boolean).join(" · ")
+
+              // Sentiment line (crypto only)
+              const sentLine = sentiment
+                ? `情緒 ${sentiment.score === 1 ? "📈 正面" : sentiment.score === -1 ? "📉 負面" : "➖ 中性"} · ${sentiment.summary}`
+                : null
+
+              const msg = [
+                `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
+                strongLine,
+                `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${fmtPrice(latest.close)}`,
+                indLine,
+                sentLine,
+                crossActionLine(signal, fastPeriod, slowPeriod, maFastLast, maSlowLast),
+                insight,
+              ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
+
+              await push(watchlist.platform, watchlist.user_id, msg)
+              notified++
+
+              await db.signalHistory.upsert({
+                where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal } },
+                create: {
+                  symbol:      normalizedSymbol,
+                  asset_type:  assetType,
+                  signal,
+                  signal_date: new Date(latest.date),
+                  close_price: latest.close,
+                  ma25:        maFastLast,
+                  ma60:        maSlowLast,
+                  confidence,
+                  // Persisted at signal time so live precision per confirmation
+                  // tier can later be measured against the backtest claim.
+                  strong_passed:     strongDeath?.passed,
+                  strong_applicable: strongDeath?.applicable,
+                },
+                update: {},
+              })
+
+              console.log(`  ✓ ${normalizedSymbol} → ${signal}${strongDeath ? ` (死叉確認 ${strongDeath.passed}/${FACTOR_COUNT}${strongDeath.isStrong ? " ⚡強確認" : ""})` : ""}`)
+            } catch (err) {
+              // Hand the claim back so a re-run can retry rather than the
+              // notification being lost to a transient push failure.
+              await releaseNotification(key)
+              throw err
             }
-
-            // Strong-death evaluation runs concurrently with the AI insight call
-            const [insight, strongDeath] = await Promise.all([
-              notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment),
-              signal === "death_cross"
-                ? evaluateStrongDeath(normalizedSymbol, assetType, slowPeriod, getMarket(assetType, normalizedSymbol), latest.date)
-                : Promise.resolve(null),
-            ])
-            // 83% precision claim only for the backtested MA25/60 configuration
-            const strongLine = strongDeath
-              ? formatStrongDeathLine(strongDeath, fastPeriod === 25 && slowPeriod === 60)
-              : null
-
-            // RSI + MACD summary line
-            const rsiStr  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
-            const macdStr = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
-            const indLine = [rsiStr, macdStr].filter(Boolean).join(" · ")
-
-            // Sentiment line (crypto only)
-            const sentLine = sentiment
-              ? `情緒 ${sentiment.score === 1 ? "📈 正面" : sentiment.score === -1 ? "📉 負面" : "➖ 中性"} · ${sentiment.summary}`
-              : null
-
-            const msg = [
-              `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
-              strongLine,
-              `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${fmtPrice(latest.close)}`,
-              indLine,
-              sentLine,
-              crossActionLine(signal, fastPeriod, slowPeriod, maFastLast, maSlowLast),
-              insight,
-            ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
-
-            await push(watchlist.platform, watchlist.user_id, msg)
-
-            await db.signalHistory.upsert({
-              where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal } },
-              create: {
-                symbol:      normalizedSymbol,
-                asset_type:  assetType,
-                signal,
-                signal_date: new Date(latest.date),
-                close_price: latest.close,
-                ma25:        maFastLast,
-                ma60:        maSlowLast,
-                confidence,
-                // Persisted at signal time so live precision per confirmation
-                // tier can later be measured against the backtest claim.
-                strong_passed:     strongDeath?.passed,
-                strong_applicable: strongDeath?.applicable,
-              },
-              update: {},
-            })
-
-            console.log(`  ✓ ${normalizedSymbol} → ${signal}${strongDeath ? ` (死叉確認 ${strongDeath.passed}/${FACTOR_COUNT}${strongDeath.isStrong ? " ⚡強確認" : ""})` : ""}`)
           }
         }
       }
@@ -255,50 +312,55 @@ export async function runScan(markets?: Market[]) {
             // so it's timezone-independent. The old `gte today(Taipei)` never matched its
             // own writes for US symbols (scanned at 22:00 UTC = Taipei next day), making
             // the US proximity dedup a no-op that could re-alert on any same-day re-run.
-            const alreadyAlerted = await db.signalHistory.findFirst({
-              where: {
-                symbol:      normalizedSymbol,
-                signal_date: new Date(latest.date),
-                signal:      "proximity_golden",
-              },
-            })
+            // Now also per-user, for the same reason as the cross event above.
+            const proxKey = {
+              userId: watchlist.user_id, platform: watchlist.platform,
+              symbol: normalizedSymbol, signalDate: new Date(latest.date),
+              signal: "proximity_golden" as const,
+            }
 
-            if (!alreadyAlerted) {
-              const entryLow  = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
-              const entryHigh = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
-              const stopLine  = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
-              const insight   = await notifyInsight(chartData, "proximity_golden", fastPeriod, slowPeriod)
+            if (await claimNotification(proxKey)) {
+              try {
+                const entryLow  = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                const entryHigh = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
+                const stopLine  = maSlowLast.toLocaleString(undefined, { maximumFractionDigits: 2 })
+                const insight   = await notifyInsight(chartData, "proximity_golden", fastPeriod, slowPeriod)
 
-              const proxRsi  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
-              const proxMacd = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
-              const proxInd  = [proxRsi, proxMacd].filter(Boolean).join(" · ")
+                const proxRsi  = rsi != null      ? `RSI ${rsi.toFixed(1)}` : null
+                const proxMacd = macdHist != null ? `MACD柱 ${fmtMacd(macdHist)}` : null
+                const proxInd  = [proxRsi, proxMacd].filter(Boolean).join(" · ")
 
-              const proximityMsg = [
-                `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區`,
-                `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${fmtPrice(latest.close)}`,
-                proxInd,
-                `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
-                insight,
-              ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
+                const proximityMsg = [
+                  `📍 ${watchlist.label ?? watchlist.symbol} 接近 MA${fastPeriod} 進場區`,
+                  `距 MA${fastPeriod} 僅 ${(priceDist * 100).toFixed(2)}% · 收盤 ${fmtPrice(latest.close)}`,
+                  proxInd,
+                  `進場區 ${entryLow}–${entryHigh}，跌破 ${stopLine} 停損`,
+                  insight,
+                ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
-              await push(watchlist.platform, watchlist.user_id, proximityMsg)
+                await push(watchlist.platform, watchlist.user_id, proximityMsg)
+                notified++
 
-              await db.signalHistory.upsert({
-                where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_golden" } },
-                create: {
-                  symbol:      normalizedSymbol,
-                  asset_type:  assetType,
-                  signal:      "proximity_golden",
-                  signal_date: new Date(latest.date),
-                  close_price: latest.close,
-                  ma25:        maFastLast,
-                  ma60:        maSlowLast,
-                  confidence,
-                },
-                update: {},
-              })
+                await db.signalHistory.upsert({
+                  where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_golden" } },
+                  create: {
+                    symbol:      normalizedSymbol,
+                    asset_type:  assetType,
+                    signal:      "proximity_golden",
+                    signal_date: new Date(latest.date),
+                    close_price: latest.close,
+                    ma25:        maFastLast,
+                    ma60:        maSlowLast,
+                    confidence,
+                  },
+                  update: {},
+                })
 
-              console.log(`  ✓ ${normalizedSymbol} → proximity_golden`)
+                console.log(`  ✓ ${normalizedSymbol} → proximity_golden`)
+              } catch (err) {
+                await releaseNotification(proxKey)
+                throw err
+              }
             }
           }
 
@@ -319,47 +381,67 @@ export async function runScan(markets?: Market[]) {
             })
 
             if (recentProximity) {
-              const alreadyExited = await db.signalHistory.findFirst({
-                where: {
-                  symbol:      normalizedSymbol,
-                  signal_date: new Date(latest.date),
-                  signal:      "proximity_exit",
-                },
-              })
+              const exitKey = {
+                userId: watchlist.user_id, platform: watchlist.platform,
+                symbol: normalizedSymbol, signalDate: new Date(latest.date),
+                signal: "proximity_exit" as const,
+              }
 
-              if (!alreadyExited) {
-                const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${fmtPrice(latest.close)}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
+              if (await claimNotification(exitKey)) {
+                try {
+                  const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${fmtPrice(latest.close)}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
 
-                await push(watchlist.platform, watchlist.user_id, exitMsg)
+                  await push(watchlist.platform, watchlist.user_id, exitMsg)
+                  notified++
 
-                await db.signalHistory.upsert({
-                  where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_exit" } },
-                  create: {
-                    symbol:      normalizedSymbol,
-                    asset_type:  assetType,
-                    signal:      "proximity_exit",
-                    signal_date: new Date(latest.date),
-                    close_price: latest.close,
-                    ma25:        maFastLast,
-                    ma60:        maSlowLast,
-                    confidence,
-                  },
-                  update: {},
-                })
+                  await db.signalHistory.upsert({
+                    where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_exit" } },
+                    create: {
+                      symbol:      normalizedSymbol,
+                      asset_type:  assetType,
+                      signal:      "proximity_exit",
+                      signal_date: new Date(latest.date),
+                      close_price: latest.close,
+                      ma25:        maFastLast,
+                      ma60:        maSlowLast,
+                      confidence,
+                    },
+                    update: {},
+                  })
 
-                console.log(`  ✓ ${normalizedSymbol} → proximity_exit`)
+                  console.log(`  ✓ ${normalizedSymbol} → proximity_exit`)
+                } catch (err) {
+                  await releaseNotification(exitKey)
+                  throw err
+                }
               }
             }
           }
         }
       } catch (err) {
+        alertFailed++
         console.error(`  ✗ proximity block for ${watchlist.symbol}:`, err)
       }
 
     } catch (err) {
+      alertFailed++
       console.error(`  ✗ ${watchlist.symbol}:`, err)
     }
   }))
 
-  console.log("Scan complete.")
+  const result: ScanRunResult = {
+    alerts:           alerts.length,
+    symbols:          symbolMeta.size,
+    notified,
+    fetchFailed,
+    alertFailed,
+    insufficientData: [...insufficientData],
+  }
+  console.log(
+    `Scan complete. alerts=${result.alerts} symbols=${result.symbols} notified=${result.notified} ` +
+    `alertFailed=${result.alertFailed}` +
+    (fetchFailed.length ? ` fetchFailed=${fetchFailed.join(",")}` : "") +
+    (result.insufficientData.length ? ` insufficientData=${result.insufficientData.join(",")}` : "")
+  )
+  return result
 }

@@ -1,4 +1,4 @@
-import { BinanceAdapter } from "./binance.js"
+import { BinanceAdapter, isCryptoSymbol } from "./binance.js"
 import { YahooFinanceAdapter } from "./yahoo.js"
 import type { MarketAdapter } from "./interface.js"
 
@@ -9,15 +9,21 @@ const yahoo   = new YahooFinanceAdapter()
  * Route a symbol string to the correct adapter.
  *
  * ROUTING RULES:
- *   Contains "USDT" or "BTC" or "ETH" → Binance (crypto)
- *   Contains "."  (e.g. "2330.TW")    → Yahoo (stock with exchange suffix)
- *   Pure digits 4 chars               → Yahoo (Taiwan stock shorthand → append .TW)
- *   Otherwise                         → Yahoo (US stock, e.g. "AAPL")
+ *   Exact crypto pair (…USDT or a mapped pair) → Kraken (crypto)
+ *   Everything else                            → Yahoo (stock)
+ *
+ * `normalizedSymbol` is only upper-cased/trimmed — it is NOT the canonical
+ * exchange symbol. A bare Taiwan code ("2330") stays "2330" here because
+ * choosing between .TW and .TWO requires a network probe, which this
+ * synchronous router cannot do. Anything that PERSISTS a symbol (watchlist,
+ * reminders, trades, cache keys, signal history) must go through
+ * `resolveSymbol()` in utils/symbol.ts first; see the note there for what the
+ * un-canonicalised form cost in production.
  */
 export function getAdapter(symbol: string): { adapter: MarketAdapter; normalizedSymbol: string } {
   const upper = symbol.toUpperCase().trim()
 
-  if (upper.endsWith("USDT") || /^(BTC|ETH|BNB|SOL|XRP|DOGE|ADA|AVAX|DOT|MATIC|LINK|LTC)/.test(upper)) {
+  if (isCryptoSymbol(upper)) {
     return { adapter: binance, normalizedSymbol: upper }
   }
 

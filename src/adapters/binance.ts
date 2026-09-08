@@ -17,6 +17,7 @@
 
 import type { MarketAdapter } from "./interface.js"
 import type { OHLCV } from "../engine/types.js"
+import { fetchWithRetry } from "./http.js"
 
 const BASE = "https://api.kraken.com/0/public"
 
@@ -42,6 +43,21 @@ const PAIR_MAP: Record<string, string> = {
 function toKrakenPair(symbol: string): string {
   const upper = symbol.toUpperCase()
   return PAIR_MAP[upper] ?? upper
+}
+
+/**
+ * Is this symbol a crypto pair this adapter can serve?
+ *
+ * Single source of truth for adapter routing. The router used to use a PREFIX
+ * test (`/^(BTC|ETH|SOL|ADA|DOT|LINK|LTC|…)/`), which swallowed real listed
+ * equities whose ticker merely starts with a coin name — verified against the
+ * live router: SOLV (Solventum, NYSE), BTCS (BTCS Inc., Nasdaq) and ADAP
+ * (Adaptimmune) all routed to Kraken, where they can never resolve. Membership
+ * is exact: an explicit mapped pair, or an unambiguous …USDT pair name.
+ */
+export function isCryptoSymbol(symbol: string): boolean {
+  const upper = symbol.toUpperCase().trim()
+  return upper.endsWith("USDT") || Object.prototype.hasOwnProperty.call(PAIR_MAP, upper)
 }
 
 /**
@@ -75,6 +91,8 @@ export function normalizeKrakenBars(
 
 export class BinanceAdapter implements MarketAdapter {
   getAssetType() { return "crypto" as const }
+  // The class name is historical — the bars come from Kraken (see the header).
+  getSource()    { return "kraken" }
 
   async validateSymbol(symbol: string): Promise<boolean> {
     return /^[A-Z0-9]{3,20}$/.test(symbol.toUpperCase())
@@ -102,7 +120,11 @@ export class BinanceAdapter implements MarketAdapter {
     const since = Math.floor(Date.now() / 1000) - days * 86400
     const url = `${BASE}/OHLC?pair=${pair}&interval=1440&since=${since}`
 
-    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) })
+    // Retried once on 429/5xx/network: the crypto scan reads each pair exactly
+    // once a day and only fires on the last bar's transition, so one blip here
+    // loses that day's cross permanently. (The Ticker quote above is NOT
+    // retried — it is best-effort and already degrades to the bar close.)
+    const res = await fetchWithRetry(url, { timeoutMs: 8_000 })
     if (!res.ok) throw new Error(`Kraken fetch failed: ${res.status} ${symbol}`)
 
     const json = await res.json() as KrakenResponse

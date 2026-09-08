@@ -4,6 +4,7 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { authMiddleware } from "../auth.js"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbol } from "../utils/symbol.js"
 
 export const watchlistRouter = new Hono()
 watchlistRouter.use("*", authMiddleware)
@@ -48,9 +49,16 @@ watchlistRouter.post("/", zValidator("json", addSchema), async c => {
   const { userId, platform } = c.get("user")
   const { symbol, label } = c.req.valid("json")
 
-  const { adapter, normalizedSymbol } = getAdapter(symbol)
-  const valid = await adapter.validateSymbol(normalizedSymbol)
-  if (!valid) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 422)
+  const { adapter } = getAdapter(symbol)
+  const valid = await adapter.validateSymbol(symbol.toUpperCase().trim())
+  if (!valid) return c.json({ error: `Symbol not found: ${symbol}` }, 422)
+
+  // Canonicalise BEFORE writing: "2330" and "2330.TW" must not become two rows
+  // (and "5230.TW" must become "5230.TWO", which is where it actually lists).
+  const { symbol: normalizedSymbol, assetType, resolved } = await resolveSymbol(symbol)
+  if (!resolved) {
+    return c.json({ error: `無法確認 ${symbol} 的上市/上櫃別，請稍後再試` }, 422)
+  }
 
   const existing = await db.watchlist.findFirst({
     where: { user_id: userId, platform, symbol: normalizedSymbol },
@@ -62,7 +70,7 @@ watchlistRouter.post("/", zValidator("json", addSchema), async c => {
       user_id:    userId,
       platform,
       symbol:     normalizedSymbol,
-      asset_type: adapter.getAssetType(),
+      asset_type: assetType,
       label,
       alert: { create: { on_golden: true, on_death: true, active: true } },
     },

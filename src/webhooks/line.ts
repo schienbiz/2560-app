@@ -15,8 +15,9 @@
 
 import { createHmac, timingSafeEqual } from "crypto"
 import type { Context } from "hono"
-import { chatWithContext } from "../services/ai.js"
+import { chatWithContext, hasAnyProviderKey } from "../services/ai.js"
 import { getUserContext } from "../services/bot-context.js"
+import { clampMessage, LINE_TEXT_LIMIT } from "../utils/message.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -41,57 +42,60 @@ function verifySignature(body: string, signature: string): boolean {
 
 // ─── Reply via LINE Messaging API ─────────────────────────────────────────────
 
-async function replyMessage(replyToken: string, text: string) {
+/**
+ * POST a reply and REPORT the outcome.
+ *
+ * These calls used to be a bare `await fetch(...)` with no status check: an
+ * expired reply token, a 429, or an over-limit body produced no throw, no log
+ * and no message — the user simply never got an answer and nothing anywhere
+ * recorded it. LINE text has no parse mode, so unlike the Telegram path there
+ * is no markup hazard here; the only hard limit is 5000 chars (clampMessage).
+ */
+async function lineReply(replyToken: string, messages: object[], what: string) {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
   if (!token) return
 
-  await fetch("https://api.line.me/v2/bot/message/reply", {
+  const res = await fetch("https://api.line.me/v2/bot/message/reply", {
     method:  "POST",
+    signal:  AbortSignal.timeout(10_000),
     headers: {
       "Content-Type":  "application/json",
       "Authorization": `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      replyToken,
-      messages: [{ type: "text", text }],
-    }),
+    body: JSON.stringify({ replyToken, messages }),
   })
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "")
+    console.error(`[line-webhook] ${what} reply failed ${res.status}: ${body.slice(0, 200)}`)
+  }
+}
+
+async function replyMessage(replyToken: string, text: string) {
+  await lineReply(replyToken, [{ type: "text", text: clampMessage(text, LINE_TEXT_LIMIT) }], "text")
 }
 
 async function sendWelcomeMessage(replyToken: string) {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
-  if (!token) return
-
   const liffId  = process.env.LIFF_ID
   const appUrl  = liffId ? `https://miniapp.line.me/${liffId}` : (process.env.APP_URL ?? "https://two560-app.onrender.com")
 
-  await fetch("https://api.line.me/v2/bot/message/reply", {
-    method:  "POST",
-    headers: {
-      "Content-Type":  "application/json",
-      "Authorization": `Bearer ${token}`,
+  await lineReply(replyToken, [
+    {
+      type: "text",
+      text: "👋 歡迎使用 2560戰法助理！\n\n我會根據您的自選清單和交易記錄回答問題。\n\n可以問我：\n• BTCUSDT 現在有訊號嗎？\n• 我的自選清單有哪些？\n• 幫我分析 TSLA\n• 我最近的勝率如何？",
     },
-    body: JSON.stringify({
-      replyToken,
-      messages: [
-        {
-          type: "text",
-          text: "👋 歡迎使用 2560戰法助理！\n\n我會根據您的自選清單和交易記錄回答問題。\n\n可以問我：\n• BTCUSDT 現在有訊號嗎？\n• 我的自選清單有哪些？\n• 幫我分析 TSLA\n• 我最近的勝率如何？",
-        },
-        {
-          type:    "template",
-          altText: "開啟 2560戰法 App",
-          template: {
-            type: "buttons",
-            text: "點下方開啟完整 App",
-            actions: [
-              { type: "uri", label: "📊 開啟 2560戰法 App", uri: appUrl },
-            ],
-          },
-        },
-      ],
-    }),
-  })
+    {
+      type:    "template",
+      altText: "開啟 2560戰法 App",
+      template: {
+        type: "buttons",
+        text: "點下方開啟完整 App",
+        actions: [
+          { type: "uri", label: "📊 開啟 2560戰法 App", uri: appUrl },
+        ],
+      },
+    },
+  ], "welcome")
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -104,7 +108,7 @@ export async function handleLineWebhook(c: Context): Promise<Response> {
     return c.json({ error: "Invalid signature" }, 401)
   }
 
-  if (!process.env.GROQ_API_KEY) {
+  if (!hasAnyProviderKey()) {
     return c.json({ ok: true })  // Acknowledge but skip AI
   }
 

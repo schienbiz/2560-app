@@ -4,6 +4,7 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { authMiddleware } from "../auth.js"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbol } from "../utils/symbol.js"
 
 export const remindersRouter = new Hono()
 remindersRouter.use("*", authMiddleware)
@@ -33,16 +34,23 @@ remindersRouter.post("/", zValidator("json", createSchema), async c => {
   const { userId, platform } = c.get("user")
   const { symbol, remind_date, note } = c.req.valid("json")
 
-  const { adapter, normalizedSymbol } = getAdapter(symbol)
-  const valid = await adapter.validateSymbol(normalizedSymbol)
-  if (!valid) return c.json({ error: `Symbol not found: ${normalizedSymbol}` }, 422)
+  const { adapter } = getAdapter(symbol)
+  const valid = await adapter.validateSymbol(symbol.toUpperCase().trim())
+  if (!valid) return c.json({ error: `Symbol not found: ${symbol}` }, 422)
+
+  // Same canonical form as the watchlist, so a reminder and its symbol's
+  // signal history/cache all key on one string.
+  const { symbol: normalizedSymbol, assetType, resolved } = await resolveSymbol(symbol)
+  if (!resolved) {
+    return c.json({ error: `無法確認 ${symbol} 的上市/上櫃別，請稍後再試` }, 422)
+  }
 
   const item = await db.remindMe.create({
     data: {
       user_id:     userId,
       platform,
       symbol:      normalizedSymbol,
-      asset_type:  adapter.getAssetType(),
+      asset_type:  assetType,
       remind_date: new Date(remind_date),
       note:        note ?? null,
     },

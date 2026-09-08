@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { isCacheStale } from "../src/cache.js"
+import { isCacheStale, isBarTooOld, DIGEST_MAX_BAR_AGE_DAYS } from "../src/cache.js"
 
 const NOW = Date.parse("2026-07-05T12:00:00Z")
 const minsAgo = (m: number) => new Date(NOW - m * 60_000)
@@ -55,5 +55,38 @@ describe("isCacheStale", () => {
       const remindTime = Date.parse("2026-07-06T00:30:00Z")
       expect(isCacheStale(d("2026-07-05"), new Date("2026-07-05T06:05:00Z"), "stock", remindTime)).toBe(false)
     })
+  })
+})
+
+// ─── Digest freshness: bar age, not fetch age ────────────────────────────────
+//
+// Regression for a silent omission found in production on 2026-09-07. The
+// morning summary reads the cache and deliberately never fetches, so it was
+// gated on isCacheStale — whose crypto rule is a flat 15-minute FETCH TTL. That
+// cron runs at 00:00 UTC while the crypto scan writes at 01:00 UTC, so the
+// newest crypto write was always ~23 h old and therefore always "stale": every
+// crypto symbol was dropped and the user was told 「今天自選股全部平靜」 on a
+// day BTCUSDT had crossed.
+
+describe("isBarTooOld — the rule a report should use", () => {
+  it("yesterday's settled crypto bar is reportable, though isCacheStale calls the row stale", () => {
+    const bar = d("2026-07-04")
+    const fetchedYesterday = new Date(NOW - 23 * 60 * 60_000)
+    expect(isCacheStale(bar, fetchedYesterday, "crypto", NOW)).toBe(true)   // correct for a scan
+    expect(isBarTooOld(bar, DIGEST_MAX_BAR_AGE_DAYS, NOW)).toBe(false)      // correct for a digest
+  })
+
+  it("a Friday close read on the following Monday is still reportable", () => {
+    const monday = Date.parse("2026-07-06T00:30:00Z")
+    expect(isBarTooOld(d("2026-07-03"), DIGEST_MAX_BAR_AGE_DAYS, monday)).toBe(false)
+  })
+
+  it("an abandoned series is NOT narrated as today's news", () => {
+    expect(isBarTooOld(d("2026-06-01"), DIGEST_MAX_BAR_AGE_DAYS, NOW)).toBe(true)
+  })
+
+  it("boundary: exactly maxAgeDays old is still acceptable", () => {
+    const bar = new Date(NOW - DIGEST_MAX_BAR_AGE_DAYS * 24 * 60 * 60_000)
+    expect(isBarTooOld(bar, DIGEST_MAX_BAR_AGE_DAYS, NOW)).toBe(false)
   })
 })

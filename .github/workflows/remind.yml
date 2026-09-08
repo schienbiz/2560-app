@@ -16,10 +16,19 @@ jobs:
             echo "Still waking up ($i/4)..." && sleep 20
           done
 
+      # A reminder whose push fails stays sent=false, but the cron only ever
+      # looks at TODAY — so nothing retries it and nothing expires it, and the
+      # reminder is simply gone. Failing the run is the signal that it happened.
       - name: Send TW + crypto reminders
         run: |
-          curl -f --max-time 30 -X POST "${{ secrets.APP_URL }}/internal/remind?market=tw,crypto" \
-            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
+          set -euo pipefail
+          body=$(curl -f --max-time 60 -X POST "${{ secrets.APP_URL }}/internal/remind?market=tw,crypto" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}")
+          echo "$body" | jq .
+          if [ "$(echo "$body" | jq -r '.ok')" != "true" ]; then
+            echo "::error::reminders failed to send: $(echo "$body" | jq -c '.')"
+            exit 1
+          fi
 
       - name: Alert on failure
         if: failure()

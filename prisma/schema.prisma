@@ -105,6 +105,34 @@ model SignalHistory {
   @@index([symbol, signal_date])
 }
 
+// ─── Per-user notification ledger ────────────────────────────────────────────
+//
+// SignalHistory above is a GLOBAL record: one row per (symbol, date, signal),
+// a market fact. The scan used it for both jobs and they are not the same job —
+// dedup of a per-user ACTION was keyed on a global fact, so the first alert
+// processed for a symbol wrote the row and every other user watching that same
+// symbol found it already present and was skipped. It survived only because all
+// alerts run concurrently in one Promise.allSettled and all read before the
+// first write; any serialisation (connection-pool queueing, batching, a retry)
+// turns it into "one person is told, the rest are silently not". Production has
+// BTCUSDT watched by two distinct users on LINE and two on Telegram.
+//
+// This table records what was actually delivered, to whom. The unique key is
+// the idempotency key: claim it with an insert, and let the constraint — not a
+// read-then-write — decide who sends.
+model SignalNotification {
+  id          String     @id @default(cuid())
+  user_id     String
+  platform    Platform
+  symbol      String
+  signal      SignalType
+  signal_date DateTime
+  sent_at     DateTime   @default(now())
+
+  @@unique([user_id, platform, symbol, signal_date, signal])
+  @@index([symbol, signal_date])
+}
+
 // ─── Trade records ───────────────────────────────────────────────────────────
 model TradeRecord {
   id           String         @id @default(cuid())
@@ -143,7 +171,7 @@ model OhlcvCache {
   low        Float
   close      Float
   volume     Float
-  source     String   // "yahoo" | "binance"
+  source     String   // upstream feed: "yahoo" | "kraken" — MarketAdapter.getSource()
   fetched_at DateTime @default(now())
 
   @@unique([symbol, date])

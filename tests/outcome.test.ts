@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 const findManySignals = vi.fn()
 const updateSignal = vi.fn()
 const findManyOhlcv = vi.fn()
+const indexFetch    = vi.fn()
+const bulkInsert    = vi.fn()
 
 vi.mock("../src/db.js", () => ({
   db: {
@@ -15,6 +17,22 @@ vi.mock("../src/db.js", () => ({
       findMany: (...args: unknown[]) => findManyOhlcv(...args),
     },
   },
+}))
+
+// runOutcome now refreshes the benchmark index series before the fill loop.
+// Without these mocks the suite would make real Yahoo/Kraken calls — a unit
+// test that silently depends on the network being up and the market reachable.
+vi.mock("../src/adapters/index.js", () => ({
+  getAdapter: (symbol: string) => ({
+    adapter: {
+      fetchOHLCV: (...args: unknown[]) => indexFetch(symbol, ...args),
+      getSource:  () => "yahoo",
+    },
+    normalizedSymbol: symbol,
+  }),
+}))
+vi.mock("../src/cache.js", () => ({
+  bulkInsertOHLCV: (...args: unknown[]) => bulkInsert(...args),
 }))
 
 import {
@@ -81,7 +99,11 @@ describe("runOutcome", () => {
     findManySignals.mockReset()
     updateSignal.mockReset()
     findManyOhlcv.mockReset()
+    indexFetch.mockReset()
+    bulkInsert.mockReset()
     updateSignal.mockResolvedValue(undefined)
+    indexFetch.mockResolvedValue([{ date: "2026-09-07", open: 1, high: 1, low: 1, close: 1, volume: 1 }])
+    bulkInsert.mockResolvedValue(undefined)
   })
 
   const entry = {
@@ -175,6 +197,60 @@ describe("runOutcome", () => {
     await runOutcome()
     const updatedIds = updateSignal.mock.calls.map(c => c[0].where.id)
     expect(updatedIds).toEqual(["good"])
+  })
+
+  // ── Benchmark index maintenance ───────────────────────────────────────────
+  // Regression for the production state found on 2026-09-07: SPY's newest
+  // cached bar was 48 days old and 0050.TW's 24 days old, because index bars
+  // only ever arrived as a side effect of a death cross firing. Every cross
+  // that fell after its index's last bar had benchmark_20d = null forever.
+
+  it("refreshes all three benchmark indexes before filling, and writes them to the cache", async () => {
+    findManySignals.mockResolvedValue([])
+    await runOutcome()
+
+    const fetched = indexFetch.mock.calls.map(c => c[0]).sort()
+    expect(fetched).toEqual(["0050.TW", "BTCUSDT", "SPY"])
+
+    const stored = bulkInsert.mock.calls.map(c => c[0]).sort()
+    expect(stored).toEqual(["0050.TW", "BTCUSDT", "SPY"])
+    // The source column records the FEED, not the asset type.
+    expect(bulkInsert.mock.calls[0][1]).toBe("yahoo")
+  })
+
+  it("covers the whole eligibility window: the index fetch spans more than STALE_AGE_DAYS", async () => {
+    findManySignals.mockResolvedValue([])
+    await runOutcome()
+    // An index shallower than the 120-day eligibility window plus its +33d
+    // horizon could not price the oldest revisitable signal.
+    const days = indexFetch.mock.calls[0][2] as number
+    expect(days).toBeGreaterThan(120 + 33)
+  })
+
+  it("a dead index source is reported but does not stop the outcome fill", async () => {
+    indexFetch.mockRejectedValue(new Error("yahoo down"))
+    findManySignals.mockResolvedValue([{ ...entry, id: "still-filled" }])
+    findManyOhlcv.mockResolvedValue(dailyBars(34))
+
+    const result = await runOutcome()
+
+    expect(result.indexRefreshFailed.sort()).toEqual(["0050.TW", "BTCUSDT", "SPY"])
+    expect(updateSignal.mock.calls.map(c => c[0].where.id)).toEqual(["still-filled"])
+    expect(result.failed).toBe(0)
+  })
+
+  it("reports pending and failed counts so the caller can tell a silent no-op from a good run", async () => {
+    findManySignals.mockResolvedValue([
+      { ...entry, id: "ok",  symbol: "HOOD" },   // `entry` is itself PYPL
+      { ...entry, id: "bad", symbol: "PYPL" },
+    ])
+    findManyOhlcv.mockImplementation(({ where }: { where: { symbol: string } }) =>
+      where.symbol === "PYPL" ? Promise.reject(new Error("boom")) : Promise.resolve(dailyBars(34)))
+
+    const result = await runOutcome()
+    expect(result.pending).toBe(2)
+    expect(result.failed).toBe(1)
+    expect(result.indexRefreshFailed).toEqual([])
   })
 })
 

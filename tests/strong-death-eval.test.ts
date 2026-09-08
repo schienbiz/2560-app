@@ -11,7 +11,10 @@ vi.mock("../src/cache.js", () => ({
 }))
 vi.mock("../src/adapters/index.js", () => ({
   getAdapter: (symbol: string) => ({
-    adapter: { fetchOHLCV: (...args: unknown[]) => adapterFetch(symbol, ...args) },
+    adapter: {
+      fetchOHLCV: (...args: unknown[]) => adapterFetch(symbol, ...args),
+      getSource:  () => "yahoo",
+    },
     normalizedSymbol: symbol,
   }),
 }))

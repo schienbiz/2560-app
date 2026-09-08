@@ -185,6 +185,21 @@ function getProviders(): Provider[] {
   ].filter(p => !!p.key())
 }
 
+/**
+ * Is at least one AI provider actually usable?
+ *
+ * Derived from the SAME registry the calls use, so it cannot drift from it.
+ * The four call sites that gate on "do we have AI" each hard-coded their own
+ * env-var list, and each list was already wrong: three still admitted
+ * `CEREBRAS_API_KEY` (that provider was removed on 2026-09-02 — every key on
+ * the account answers 402), so a Cerebras-only config passed the gate and then
+ * failed on every call; and the LINE webhook demanded GROQ_API_KEY
+ * specifically, so an OpenRouter-only deployment silently had no LINE bot.
+ */
+export function hasAnyProviderKey(): boolean {
+  return getProviders().length > 0
+}
+
 // ─── Chat: NVIDIA → Groq → OpenRouter sequential fallback ────────────────────
 // Used for latency-sensitive calls (push notifications, sentiment scoring).
 
@@ -525,8 +540,11 @@ export async function notifyInsight(
     : ""
   const indicators = [rsiLine, macdLine, sentLine].filter(Boolean).join("，")
 
+  // fmt(), not the raw float. The prompt below orders the model to quote these
+  // numbers verbatim, so a Yahoo float (333.260009765625) fed in here comes
+  // back out inside the push message.
   const prompt = `標的：${data.symbol}
-收盤：${close}，MA${fastPeriod}：${ma25?.toFixed(2) ?? "N/A"}，MA${slowPeriod}：${ma60?.toFixed(2) ?? "N/A"}
+收盤：${fmt(close)}，MA${fastPeriod}：${ma25?.toFixed(2) ?? "N/A"}，MA${slowPeriod}：${ma60?.toFixed(2) ?? "N/A"}
 訊號：${signalCtx}
 趨勢階段：${struct.phase}，偏向：${struct.bias}，ATR(14)：${struct.atr14.toFixed(2)}${indicators ? "\n" + indicators : ""}
 
