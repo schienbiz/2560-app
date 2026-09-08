@@ -1,5 +1,10 @@
 node_modules/
-.env
+# `.env` alone did not cover the variants an edit leaves behind (.env.bak-*,
+# .env.local, .env.save). This repo is deliberately PUBLIC, so a single
+# `git add -A` over an untracked backup would publish the Neon URL and every
+# bot token. Ignore the whole family; keep the committed example.
+.env*
+!.env.example
 dist/
 *.js.map
 .gstack/
