@@ -16,10 +16,21 @@ jobs:
             echo "Still waking up ($i/4)..." && sleep 20
           done
 
+      # Same structural blind spot the outcome cron had: the endpoint used to
+      # return {ok:true} and run in the background, so a 60s curl proved only
+      # that the request arrived and this workflow was green whatever happened
+      # to the digest. It now AWAITS the run; 240s covers one AI call per
+      # symbol with a signal, per user.
       - name: Trigger morning summary
         run: |
-          curl -f --max-time 60 -X POST "${{ secrets.APP_URL }}/internal/morning-summary" \
-            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
+          set -euo pipefail
+          body=$(curl -f --max-time 240 -X POST "${{ secrets.APP_URL }}/internal/morning-summary" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}")
+          echo "$body" | jq .
+          if [ "$(echo "$body" | jq -r '.ok')" != "true" ]; then
+            echo "::error::morning summary reported push failures: $(echo "$body" | jq -c '.')"
+            exit 1
+          fi
 
       # 靜默失敗 = 早報沒發而使用者不知道（user-facing 每日訊息，無自癒）。
       - name: Alert on failure

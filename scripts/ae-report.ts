@@ -94,6 +94,10 @@ async function main() {
   const rows: Row[] = await db.signalHistory.findMany({
     where: { signal: { in: ["golden_cross", "death_cross"] } },
     select: {
+      // `symbol` is selected so the §1 gap list can name the offending rows —
+      // a bare count tells you something is wrong but not what to go and look
+      // at, which is how the 2026-09-02 warning got waved through.
+      symbol: true,
       signal: true, strong_passed: true, strong_applicable: true,
       outcome_5d: true, outcome_20d: true, benchmark_5d: true, benchmark_20d: true,
       outcome_computed_at: true, signal_date: true,
@@ -102,19 +106,45 @@ async function main() {
   })
 
   // ── §1 pipeline coverage ────────────────────────────────────────────────
-  const matured = rows.filter(r => Date.now() - r.signal_date.getTime() > 10 * 86_400_000)
+  //
+  // Maturity is measured PER HORIZON. It used to be a single ">10 days" bucket
+  // that was then asked for a 20d value — but the 20d horizon is +28 CALENDAR
+  // days (WINDOW_CAL_DAYS.d20), so every signal aged 11–27 days was counted as
+  // "matured" and then reported as a coverage gap it could not possibly have
+  // filled. On 2026-09-08 that mislabelled 5 perfectly healthy rows; on
+  // 2026-09-02 the same warning was read as "the pipeline is fine, the data
+  // just isn't available" and it masked a real defect underneath (nothing kept
+  // the benchmark index series current). A gate that cries wolf gets ignored,
+  // then gets believed at the wrong moment.
+  const ageDays = (r: { signal_date: Date }) => (Date.now() - r.signal_date.getTime()) / 86_400_000
+  const mature10 = rows.filter(r => ageDays(r) > 14)   // +10 trading days ≈ 14 calendar
+  const mature20 = rows.filter(r => ageDays(r) > 28)   // +20 trading days ≈ 28 calendar
+
   console.log("§1 管道覆蓋（先確認數據真的在累積，再看 §2）")
   console.table([{
     "交叉總數": rows.length,
-    "已成熟(>10d)": matured.length,
-    "有20d outcome": matured.filter(r => r.outcome_20d != null).length,
-    "有20d benchmark": matured.filter(r => r.benchmark_20d != null).length,
+    "10d視窗已到期": mature10.length,
+    "20d視窗已到期": mature20.length,
+    "有20d outcome": mature20.filter(r => r.outcome_20d != null).length,
+    "有20d benchmark": mature20.filter(r => r.benchmark_20d != null).length,
     "死叉有強確認分": rows.filter(r => r.signal === "death_cross" && r.strong_passed != null).length
       + "/" + rows.filter(r => r.signal === "death_cross").length,
     "最早訊號": rows[0]?.signal_date.toISOString().slice(0, 10) ?? "—",
   }])
-  const gap = matured.filter(r => r.outcome_20d == null || r.benchmark_20d == null).length
-  if (gap > 0) console.log(`⚠️ ${gap} 筆成熟訊號缺 20d outcome/benchmark — 先查 outcome cron 再解讀下表\n`)
+
+  // Only a row whose window HAS closed and is still empty is a pipeline fault.
+  const missingOutcome = mature20.filter(r => r.outcome_20d == null)
+  const missingBench   = mature20.filter(r => r.benchmark_20d == null)
+  if (missingOutcome.length || missingBench.length) {
+    console.log(`⚠️ 視窗已到期但仍缺值：outcome ${missingOutcome.length} 筆、benchmark ${missingBench.length} 筆 — 先查 outcome cron 再解讀下表`)
+    for (const r of new Set([...missingOutcome, ...missingBench])) {
+      console.log(`   ${r.symbol} ${r.signal} ${r.signal_date.toISOString().slice(0, 10)}` +
+                  ` (${Math.floor(ageDays(r))}d, outcome=${r.outcome_20d == null ? "—" : "✓"} benchmark=${r.benchmark_20d == null ? "—" : "✓"})`)
+    }
+    console.log("")
+  } else {
+    console.log("✅ 覆蓋乾淨：所有 20d 視窗已到期的訊號都有 outcome 與 benchmark\n")
+  }
 
   // ── §2 A/E cells ────────────────────────────────────────────────────────
   const death = rows.filter(r => r.signal === "death_cross")

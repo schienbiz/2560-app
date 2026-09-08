@@ -1,5 +1,114 @@
 # Changelog
 
+## [1.7.0] — 2026-09-07
+
+窮盡式審視的修復批次。每一項都以生產 Neon 唯讀查詢、真實 API 探測或實跑驗證，不是
+讀碼推論；每一項都補上會失敗的測試（171 → 217 測，含突變測試確認新測試會咬人）。
+
+### Fixed
+
+- **同一檔台股存成兩檔（別名重複）**。`getAdapter()` 是同步的，只能轉大寫，所以純
+  數字代碼被原樣寫入，而 Yahoo adapter 在抓取時「內部」才決定 `.TW`。同一支股票因此
+  有兩個 key：`OhlcvCache` 同時存在 `2330`（503 根）與 `2330.TW`（503 根）且 503 根
+  收盤價逐日相同；`SignalHistory` 把每一次 2330 事件記兩遍，勝率統計把一檔當兩檔；
+  同一位使用者同時追 `5230` 與 `5230.TW`，一次交叉推兩則。存進去的後綴甚至
+  可能本來就是錯的——實際探測 Yahoo：`5230`、`8937`、`3176` 都在**上櫃（`.TWO`，其
+  `.TW` 回 404）**，而 watchlist 存的是 `5230.TW` / `8937.TW`。新增
+  `src/utils/symbol.ts::resolveSymbol()`，在所有**寫入**路徑（watchlist / 提醒 / 交易
+  記錄 / TG `/追蹤` `/移除`）先對真實資料源解析出唯一代碼；探測「無法判定」時拒絕
+  寫入而不是猜。既有資料由 `scripts/migrate-canonical-symbols.ts` 合併。
+- **大盤指數序列沒有任何東西在維護**。benchmark 欄位只**讀** `OhlcvCache`，而指數 bar
+  只有在死叉觸發 `evaluateStrongDeath()` 時才會被抓進來——於是指數在該市場停止出現
+  死叉的那一刻就凍結。實測 2026-09-07：SPY 最後一根 2026-07-21（48 天前）、0050.TW
+  最後一根 2026-08-14（24 天前），而 19 筆缺 `benchmark_20d` 的交叉**全部**落在各自
+  指數的終點之後（美股在 07-21 後、台股在 08-14 後），分界完全吻合。這正是 09-02
+  擋住 Phase 1 §1 覆蓋閘門的原因，先前被判定為「資料可得性」——不是。`runOutcome()`
+  現在每天先刷新三檔指數（200 天視窗）再進填補迴圈。
+- **加密貨幣永遠不會出現在早報**。早報只讀快取（00:00 UTC 刻意不抓，避免冷啟動），
+  而 crypto 的快取判準是 15 分鐘的**抓取** TTL；scan-crypto 在 01:00 UTC 寫入，所以
+  早報看到的永遠是 ~23 小時前的寫入 = 恆為 stale → 每個 crypto 標的都被跳過，使用者
+  在 BTC 出現交叉的那天收到「今天自選股全部平靜」。新增 `getCachedOHLCVByBarAge()`：
+  報告類介面改用「最後一根 K 棒的日期」判斷（上限 7 天），訊號層的抓取新鮮度不動。
+- **Telegram 通知會被自己的 `parse_mode` 吞掉**。實測真實 Bot API：帶
+  `parse_mode: "HTML"` 的 `"RSI<50 動能轉弱"` → `400 can't parse entities: Unsupported
+  start tag "50"`，且在解析 chat 之前就被拒 = 整則消失（`&`、`>` 沒事）。推播路徑的
+  throw 被 `runScan` 的 `Promise.allSettled` 吞掉、workflow 照樣綠；bot 回覆路徑的
+  `sendMessage` **連 `res.ok` 都沒檢查**，完全無聲。推播不再帶 `parse_mode`；bot 指令
+  回覆保留 `<b>` 但所有插值（代碼、使用者自訂 label、AI 回覆）過 `escapeHtml`；
+  Telegram 與 LINE 的送出都補上狀態檢查與 log。`clampMessage` 改為不會切斷代理對。
+- **交叉去重是全域的，動作卻是 per-user**。`signalHistory.findFirst({symbol, date,
+  signal})` 沒有 user 維度：第一個被處理的 alert 寫下那筆列，其餘追同一檔的人一律被
+  跳過。目前只是靠「所有 alert 並行且都在第一次寫入前讀完」活著——生產有 **BTCUSDT
+  在 LINE 兩位、在 Telegram 兩位不同使用者**。新增 `SignalNotification` 帳本
+  （migration `20260907150000`），用唯一鍵當 idempotency key：先 claim 再送，送失敗
+  則歸還 claim 讓下次重試。`SignalHistory` 維持「全域市場事實」不變。
+- **抓不到資料 = 當天交叉永久消失，且無任何訊號**。cron 用 lookback=1，只認最後一根
+  轉折，所以一次 Yahoo 逾時不只是延後，而是隔天那根已不是最後一根 = 永遠偵測不到；
+  而原本只有一行 `console.warn`，端點仍回 `{ok:true}`。`runScan` 現在回報
+  `fetchFailed` / `alertFailed` / `insufficientData`，OHLCV 抓取對 429/5xx/網路錯誤
+  自動重試一次（`src/adapters/http.ts`；404 不重試，上市/上櫃探測靠它快速失敗）。
+- **`/internal/outcome` 與 `/internal/morning-summary` 讓 workflow 結構性恆綠**。兩者
+  先回 200 再背景執行，GH Actions 的 curl 只量到 HTTP 交握，`if: failure()` 告警在
+  應用層失敗時**永遠不可能觸發**；且 Render 閒置 15 分鐘休眠，200 之後沒有 inbound
+  流量，背景工作可能被中途砍掉而無人知曉。四個 `/internal/*` 端點現在一律 await 並
+  回報實際結果，workflow 用 `jq` 判 `.ok`（實測失敗 payload → exit 1），`--max-time`
+  一併拉到 240（順帶解決 TODOS 的 scan 餘裕項）。
+- **Yahoo「200 但零根 K 棒」被當成成功**。`8215.TWO` 實測回 HTTP 200 且 `timestamp`
+  為空，而 `fetchOHLCV` 的 `if (bars) return bars` 中 `[]` 是 truthy → 直接回傳空陣列，
+  從不嘗試另一個交易所。`_tryFetch` 現在把空結果視為 miss，並把「確定沒有」（404）與
+  「無法判定」（429/5xx/網路）分開丟出。
+- **`getAdapter` 用前綴比對，會吃掉真實美股**。實測 `SOLV`（Solventum, NYSE）、`BTCS`
+  （BTCS Inc., Nasdaq）、`ADAP`（Adaptimmune）全被路由到 Kraken，永遠無法解析。改為
+  精確比對（`isCryptoSymbol`：`…USDT` 或 `PAIR_MAP` 成員）。
+- **記憶體快取繞過了「今日未收盤 K 棒 30 分鐘 TTL」**。`_memTTL()` 重寫了一份新鮮度
+  規則卻漏掉 today-bar 分支，對股票一律給「下一個 05:30 UTC」——2026-09-07 14:44 UTC
+  實測是 **885 分鐘**，正好擋在為此而寫的 DB 修法前面。改為直接委派 `isCacheStale`，
+  兩層不可能再分岔。
+- **`OhlcvCache.source` 存的是資產類型不是資料源**（實測 `stock` 11157 列 / `crypto`
+  994 列，schema 註解卻寫 `"yahoo" | "binance"`）。改由 `MarketAdapter.getSource()`
+  提供，既有列由 migration 腳本回填。
+- 其餘一致性：早報改用共用的 `fetchDaysFor`（原本自己手寫 1.45，實際 1.4484）；早報
+  降級行與 `notifyInsight` prompt 改用 `fmtPrice`/`fmt`（原本直印 Yahoo 原始浮點，而
+  prompt 又要求 AI 逐字引用）；四處「是否有 AI 可用」的判斷改為單一
+  `hasAnyProviderKey()`（其中三處還在認已於 09-02 移除的 `CEREBRAS_API_KEY`，LINE
+  webhook 則指名 `GROQ_API_KEY`，等於 OpenRouter-only 部署沒有 LINE bot）；提醒失敗
+  現在會計數並讓 workflow 失敗（原本靜靜消失、永不重試也永不過期）。
+
+- **A/E 報表的覆蓋閘門用錯了成熟度定義**（`scripts/ae-report.ts`）。它把「>10 天」當成熟，
+  然後要求 20d 欄位——但 20d 視窗是 **+28 個日曆日**，所以每一筆 11–27 天的訊號都被算成
+  「已成熟卻缺值」。這個假警報正是 09-02 那次誤判的來源：警告被讀成「管道沒問題，只是
+  資料還沒到」，而底下真正的缺陷（沒人維護大盤指數序列）就被蓋過去了。改成**逐視窗**
+  計算成熟度，並把真正逾期未填的列**逐筆點名**（只給數字，沒人會去查）。
+  修正後同一份資料：假警報從 6 筆降為 1 筆真缺口。
+
+### Migration — ✅ 已於 2026-09-08 對生產 Neon 執行完畢
+
+```
+npx prisma migrate deploy                              # 建 SignalNotification 表
+npx tsx scripts/migrate-canonical-symbols.ts --apply   # 合併別名 + 回填 source
+npx tsx scripts/seed-notification-claims.ts --apply    # 避免部署當天重複通知
+```
+
+實際結果：10 個別名合併（`5230.TW` 因與 `5230.TWO` 同使用者重複而被移除 = 重複推播的
+來源）、24 筆重複訊號列摺疊（cross 型 3 筆，總交叉數 29 → 26）、`source` 欄位 10,842 列
+回填、通知帳本種下 12 筆。`✅ no alias symbols remain`。
+
+**⚠️ 前置條件（本機）**：`.env` 原本沒有 `DIRECT_URL`，而 `schema.prisma` 宣告了
+`directUrl = env("DIRECT_URL")`，所以任何 `prisma migrate` 都會 P1012 失敗。已在 `.env`
+補上（值同 `DATABASE_URL`——該 Neon host 無 `-pooler`，本來就是 direct 連線；Render 兩邊
+早已同時設好兩個）。**不要**用 `DIRECT_URL=$DATABASE_URL` 這種寫法：`DATABASE_URL` 含
+未跳脫的 `&`，shell 展開會得到空字串。
+
+執行後的實測驗證：
+- P2002 語義在真實表上驗過：重複 claim 回 `false` 不 throw、不同使用者可同時 claim
+  同一次交叉、release 後可重試、無殘留列。
+- `runOutcome()` 實跑：三檔指數刷新（SPY `2026-07-21 → 2026-09-04`、0050.TW
+  `2026-08-14 → 2026-09-08`），`benchmark_20d` **10 → 16 筆**，`failed=0`。
+- 現在 outcome 與 benchmark 的缺漏集合**完全一致**（各自單獨缺漏皆為 0）——修法前有
+  多筆「有 outcome 卻無 benchmark」，指數不再是限制因素。
+- 尚未部署的線上 v1.6.1 實測可正常讀取改名後的 `5230.TWO` / `8937.TWO`，遷移沒有打壞
+  生產環境。
+
 ## [1.6.1] — 2026-07-17
 
 ### Fixed（排程報告內容極致審視）

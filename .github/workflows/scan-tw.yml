@@ -16,16 +16,35 @@ jobs:
             echo "Still waking up ($i/4)..." && sleep 20
           done
 
+      # --max-time 240, not 90: /internal/scan responds only after the whole scan
+      # finishes, and a heavy death-cross day adds deep-history fetches on top of
+      # the AI insight calls. 90s risked a false 「後端掛了」 alert on exactly the
+      # days the scan matters most (TODOS: "Scan curl --max-time headroom").
+      #
+      # The response is now INSPECTED. A 200 used to mean only "the request
+      # arrived"; a symbol whose bars could not be fetched was a console.warn
+      # inside a Promise.allSettled and the run went green — while that day's
+      # cross was lost for good, because the scan looks only at the last bar's
+      # transition and tomorrow that bar is no longer last.
       - name: Trigger TW stock scan
+        id: scan
         run: |
-          curl -f --max-time 90 -X POST "${{ secrets.APP_URL }}/internal/scan?market=tw" \
-            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}"
+          set -euo pipefail
+          body=$(curl -f --max-time 240 -X POST "${{ secrets.APP_URL }}/internal/scan?market=tw" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}")
+          echo "$body" | jq .
+          echo "body=$body" >> "$GITHUB_OUTPUT"
+          if [ "$(echo "$body" | jq -r '.ok')" != "true" ]; then
+            echo "::error::scan reported failures: $(echo "$body" | jq -c '{fetchFailed,alertFailed}')"
+            exit 1
+          fi
 
-      # cron 失敗 = 後端(Worker→two560-app-2)市場時段掛了；後端可睡不能 proactively ping，
-      # 此 dead-man 告警是非-keepalive 的 runtime 健康 backstop（補 /__up edge-only 盲點）。
+      # cron 失敗 = 後端(Worker→two560-app-2)市場時段掛了或掃描回報部分失敗；
+      # 後端可睡不能 proactively ping，此 dead-man 告警是非-keepalive 的 runtime
+      # 健康 backstop（補 /__up edge-only 盲點）。
       - name: Alert on failure
         if: failure()
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.HEALTH_CHECK_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.HEALTH_CHECK_CHAT_ID }}" \
-            -d text="🔴 2560 scan-tw 失敗 — 後端(Worker→two560-app-2)可能掛了，收盤後無法掃描。查 Render dashboard / Actions log。" > /dev/null || true
+            -d text="🔴 2560 scan-tw 失敗 — 後端可能掛了，或掃描回報抓不到資料（該日交叉會永久漏掉）。查 Actions log 的 fetchFailed。" > /dev/null || true

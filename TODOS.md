@@ -333,7 +333,12 @@ the promise memo (one index fetch per market bucket per scan) but not eliminated
 a completion heartbeat (proper, but changes the dead-man semantics — see monitoring lessons in
 memory before touching this).
 
-**Priority:** P2 — no observed occurrence yet; revisit if the workflow starts flapping.
+**Priority:** ~~P2~~ — ✅ **DONE 2026-09-07 (v1.7.0).** `--max-time` raised to 240 on all three
+scans (and on remind / outcome / morning-summary). The "respond 202 + heartbeat" option was
+rejected for exactly the reason this note flagged: `/internal/outcome` and
+`/internal/morning-summary` were ALREADY answering before doing the work, and that is precisely
+what made their `if: failure()` alerts structurally unable to fire. Both now await and report;
+every workflow reads the result body with `jq` instead of trusting the 200.
 
 **Context:** Found by red-team review during v1.4.0 ship (2026-07-08).
 
@@ -368,6 +373,51 @@ the zero-friction script, and criteria fixed in advance.
 **Depends on:** outcome pipeline staying healthy while waiting — guarded by `outcome.yml`
 `if: failure()` Telegram alert (4a69ff7) and the audit script's workflow tracking. §1 of the
 report is the backstop check at pull time.
+
+**⚠️ Update 2026-09-07 — the trigger fired on 09-02 and §1 was NOT clean; the diagnosis was
+wrong, and it is now fixed.** 22 matured crosses but only 10 carried a 20d benchmark. That was
+recorded as "not a defect, data availability". It was a defect: nothing in the system kept the
+benchmark index series current. Index bars only ever arrived as a side effect of
+`evaluateStrongDeath()`, which runs solely on a bar where a death cross fires — so SPY froze at
+2026-07-21 and 0050.TW at 2026-08-14, and every cross missing `benchmark_20d` sat after its own
+index's last bar, an exact match. v1.7.0 has `runOutcome()` refresh all three indexes daily
+before the fill loop, and the 19 affected rows are all inside `STALE_AGE_DAYS` so they will
+backfill on the next runs rather than aging out.
+
+**Re-read §1 after two or three outcome runs post-deploy**, then take the go/no-go decision
+against the criteria above — this time on clean coverage. Note that the canonical-symbol merge
+also removes ~6 duplicate cross rows (2330 was counted as two stocks), so the matured-cross
+count will drop slightly and that drop is a correction, not a regression.
+
+---
+
+## Deferred from the 2026-09-07 exhaustive review (v1.7.0)
+
+The P0/P1 findings from that review were fixed and shipped. These were deliberately left, with
+the reasoning, so they are choices rather than oversights:
+
+- **`engine/structure.ts:169-170` still uses `[...ma25].reverse().find(...)`.** The Round-6
+  no-alloc rewrite (`lastNonNull`) missed this one, and `computeStructure` runs on every
+  `analyzeChart` / `notifyInsight` / `morningInsight`. Pure allocation cost, no correctness
+  impact. Fix during any touch of that file.
+- **`src/auth.ts:87` compares the Telegram initData HMAC with `!==`.** The `25cc284` constant-time
+  hardening covered `INTERNAL_SECRET`, the LINE signature and the TG webhook token but missed
+  this one. Remote timing attacks on an HMAC comparison are not practical here; it is an
+  inconsistency, not an exposure.
+- **`routes/signals.ts` returns `{signals: []}` from its catch.** A DB fault is then
+  indistinguishable from "you have no signals" (the graceful-degradation-hides-outage pattern).
+  Needs a UI decision about what an error state should look like before changing.
+- **`/pulse` shows the last cached bar's close with no as-of date and no live-quote overlay**, so
+  during a TW session the public page shows the previous close. `/api/scan` got the overlay in
+  v1.5.1; `/pulse` is unauthenticated and cached 60s, so adding quote fetches there needs a
+  rate-limit story first. Minimum viable fix: print the bar date next to the price.
+- **A reminder whose push fails is still lost.** v1.7.0 counts the failure and fails the workflow,
+  but the row stays `sent:false` and the query only looks at today, so nothing retries or expires
+  it. Real fix: a bounded retry window, or an `attempts` column with an expiry.
+- **`engine/backtest.ts`, `engine/indicators.ts`, `src/auth.ts` and both webhook handlers still
+  have no test file.** The 2026-09-07 review found P0 bugs in exactly the untested files; backtest
+  is the highest-value gap because its win rate / profit factor / max drawdown go straight to the
+  user.
 
 ---
 

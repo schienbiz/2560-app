@@ -57,6 +57,18 @@ function secretMatches(provided: string | undefined, expected: string | undefine
 }
 
 // ─── Internal cron endpoints (guarded by INTERNAL_SECRET header) ─────────────
+//
+// Every one of these reports WHAT HAPPENED, not merely that the request
+// arrived, and every one AWAITS the work.
+//
+// morning-summary and outcome used to return `{ok:true}` and continue in the
+// background. Two consequences, both silent: the GitHub workflow measured only
+// the HTTP handshake, so its `if: failure()` Telegram alert could never fire on
+// an application-level fault — the run was green by construction; and on
+// Render's free tier the instance sleeps after ~15 minutes of inactivity, with
+// no inbound traffic after the 200, so the detached work could be killed
+// mid-flight with nothing recording it. `ok` is a claim about the WORK, and the
+// workflows read these fields (see .github/workflows/*.yml).
 app.post("/internal/scan", async c => {
   const secret = c.req.header("x-internal-secret")
   if (!secretMatches(secret, process.env.INTERNAL_SECRET)) {
@@ -65,8 +77,8 @@ app.post("/internal/scan", async c => {
   const marketParam = c.req.query("market")
   const markets = marketParam ? (marketParam.split(",") as Array<"tw" | "us" | "crypto">) : undefined
   const { runScan } = await import("../cron/scan.js")
-  await runScan(markets)
-  return c.json({ ok: true })
+  const result = await runScan(markets)
+  return c.json({ ok: result.fetchFailed.length === 0 && result.alertFailed === 0, ...result })
 })
 
 app.post("/internal/remind", async c => {
@@ -77,8 +89,8 @@ app.post("/internal/remind", async c => {
   const marketParam = c.req.query("market")
   const markets = marketParam ? (marketParam.split(",") as Array<"tw" | "us" | "crypto">) : undefined
   const { runRemind } = await import("../cron/remind.js")
-  await runRemind(markets)
-  return c.json({ ok: true })
+  const result = await runRemind(markets)
+  return c.json({ ok: result.failed === 0, ...result })
 })
 
 app.post("/internal/morning-summary", async c => {
@@ -87,8 +99,8 @@ app.post("/internal/morning-summary", async c => {
     return c.json({ error: "Forbidden" }, 403)
   }
   const { runMorningSummary } = await import("../cron/morning-summary.js")
-  runMorningSummary().catch(err => console.error("Morning summary error:", err))
-  return c.json({ ok: true })
+  const result = await runMorningSummary()
+  return c.json({ ok: result.failed === 0, ...result })
 })
 
 app.post("/internal/outcome", async c => {
@@ -97,8 +109,8 @@ app.post("/internal/outcome", async c => {
     return c.json({ error: "Forbidden" }, 403)
   }
   const { runOutcome } = await import("../cron/outcome.js")
-  runOutcome().catch(err => console.error("Outcome cron error:", err))
-  return c.json({ ok: true })
+  const result = await runOutcome()
+  return c.json({ ok: result.failed === 0 && result.indexRefreshFailed.length === 0, ...result })
 })
 
 // ─── Frontend config (injects env vars as JS globals) ────────────────────────

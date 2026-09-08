@@ -18,7 +18,23 @@ function getMarket(assetType: string, symbol: string): Market {
   return "us"
 }
 
-export async function runRemind(markets?: Market[]) {
+export interface RemindRunResult {
+  /** Reminders due today in the requested market buckets. */
+  due: number
+  /** Reminders delivered and marked sent. */
+  sent: number
+  /**
+   * Reminders whose push threw.
+   *
+   * They stay `sent: false`, but the query below only looks at TODAY, so
+   * nothing retries them and nothing expires them — a failed reminder simply
+   * disappears. Reporting the count is the minimum fix: the workflow now fails
+   * instead of going green over a reminder the user never received.
+   */
+  failed: number
+}
+
+export async function runRemind(markets?: Market[]): Promise<RemindRunResult> {
   // Use Taipei date as the boundary so reminders fire on the correct Taiwan day
   const taipeiDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" })
   const today = new Date(taipeiDateStr)       // UTC midnight of today's Taipei date
@@ -39,6 +55,9 @@ export async function runRemind(markets?: Market[]) {
   const marketLabel = markets ? ` [${markets.join(",")}]` : ""
   console.log(`Sending ${due.length}/${allDue.length} reminders${marketLabel}...`)
 
+  let sent = 0
+  let failed = 0
+
   await Promise.allSettled(due.map(async r => {
     try {
       const msg = `🔔 提醒：${r.symbol}${r.note ? `\n${r.note}` : ""}`
@@ -48,11 +67,14 @@ export async function runRemind(markets?: Market[]) {
         await pushTelegram(r.user_id, msg)
       }
       await db.remindMe.update({ where: { id: r.id }, data: { sent: true } })
+      sent++
       console.log(`  ✓ reminded ${r.user_id} about ${r.symbol}`)
     } catch (err) {
+      failed++
       console.error(`  ✗ reminder ${r.id}:`, err)
     }
   }))
 
-  console.log("Reminders sent.")
+  console.log(`Reminders complete. due=${due.length} sent=${sent} failed=${failed}`)
+  return { due: due.length, sent, failed }
 }

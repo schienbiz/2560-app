@@ -77,7 +77,7 @@ async function fetchDeepBarsUncached(symbol: string, assetType: AssetType, asOf:
   // Single-statement backfill: the ~500-bar upsert chain took minutes at WAN
   // latency (measured against production Neon) and would stall the scan's
   // notification path on cross-region deploys.
-  if (bars.length > 0) await bulkInsertOHLCV(symbol, assetType, bars).catch(() => {})
+  if (bars.length > 0) await bulkInsertOHLCV(symbol, adapter.getSource(), bars).catch(() => {})
   return bars
 }
 

@@ -6,6 +6,7 @@ import { authMiddleware } from "../auth.js"
 import { computeStats } from "../engine/stats.js"
 import type { TradeLike, SignalType } from "../engine/stats.js"
 import { getAdapter } from "../adapters/index.js"
+import { resolveSymbol } from "../utils/symbol.js"
 
 export const tradesRouter = new Hono()
 tradesRouter.use("*", authMiddleware)
@@ -58,15 +59,15 @@ tradesRouter.post("/", zValidator("json", createSchema), async c => {
   const { userId, platform } = c.get("user")
   const body = c.req.valid("json")
 
-  let normalizedSymbol = body.symbol.toUpperCase()
-  let asset_type: "stock" | "crypto" = /^\d{4}$/.test(body.symbol) ? "stock" : "crypto"
-  try {
-    const result = await getAdapter(body.symbol)
-    normalizedSymbol = result.normalizedSymbol
-    asset_type = result.adapter.getAssetType()
-  } catch {
-    console.error("getAdapter failed for symbol:", body.symbol, "— using format fallback")
-  }
+  // A trade record is the user's own bookkeeping — never block it on a data
+  // source being reachable. Store the canonical symbol when we can determine
+  // it, the upper-cased input otherwise. (The old fallback classified anything
+  // that was not a 4-digit code as "crypto", so an unresolvable AAPL would have
+  // been filed as a coin; getAdapter is synchronous and cannot throw, so that
+  // branch was also unreachable.)
+  const { adapter } = getAdapter(body.symbol)
+  const asset_type = adapter.getAssetType()
+  const { symbol: normalizedSymbol } = await resolveSymbol(body.symbol)
 
   const trade = await db.tradeRecord.create({
     data: {

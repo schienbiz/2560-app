@@ -41,6 +41,7 @@ const SECTIONS = [
         <tr><td>美股</td><td>英文代碼</td><td>AAPL、TSLA</td></tr>
         <tr><td>加密貨幣</td><td>交易對</td><td>BTCUSDT、ETHUSDT</td></tr>
       </table>
+      <p style="color:var(--muted);font-size:0.85rem">台股輸入純數字即可，系統會自動判斷上市（<code>.TW</code>）或上櫃（<code>.TWO</code>）並以完整代碼儲存——例如輸入 <code>5230</code> 會存成 <code>5230.TWO</code>。同一檔股票不論用哪種寫法加入，都會對應到同一份資料與同一份訊號紀錄，不會重複通知。</p>
       <h4>立即掃描</h4>
       <p>點擊 <strong>⚡ 掃描</strong> 抓取所有標的<strong>當下的即時價位</strong>（台股走證交所即時行情，與券商 App 同源；加密貨幣走 Kraken 即時成交價），並重新計算訊號、顯示目前交叉狀態與信心度標記。</p>
       <p>價位<strong>只在按下掃描時更新</strong>，平時不會自動刷新——清單上的價格代表「上次掃描當下」的即時價。</p>
