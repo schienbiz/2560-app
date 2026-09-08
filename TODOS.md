@@ -423,10 +423,35 @@ the reasoning, so they are choices rather than oversights:
   sketch: have `resolveTwSuffix` distinguish a DEFINITIVE "neither exchange has it" from an
   inconclusive one, and memoise only the former (that distinction already exists in `ProbeFn`'s
   false-vs-null, it just isn't plumbed out); or rate-limit the public routes.
-- **`engine/backtest.ts`, `engine/indicators.ts`, `src/auth.ts` and both webhook handlers still
-  have no test file.** The 2026-09-07 review found P0 bugs in exactly the untested files; backtest
-  is the highest-value gap because its win rate / profit factor / max drawdown go straight to the
-  user.
+- **`engine/indicators.ts`, `src/auth.ts` and both webhook handlers still have no test file.**
+  The 2026-09-07 review found P0 bugs in exactly the untested files.
+  (`engine/backtest.ts` — ✅ covered 2026-09-08, 23 tests, 12/12 mutants killed.)
+
+---
+
+## Backtest reporting quirks, surfaced by writing its tests (2026-09-08)
+
+Behaviour that is now pinned by `tests/backtest.test.ts` rather than fixed, because each one
+changes numbers the user has already seen and is therefore a product call:
+
+- **`profit_factor: null` and `expectancy: null` each mean two different things.** A strategy
+  with no losing trade has an infinite profit factor, which is mapped to `null` — the same value
+  returned when there were no trades at all. `expectancy` is `null` whenever either side is
+  empty, likewise. A caller cannot distinguish a flawless run from an empty one. Fix sketch:
+  return a discriminated value (`"undefined" | number`), or add an explicit `trade_count` check
+  in the UI before rendering the cell.
+- **A backtest can miss one cross the live scanner would take.** The loop starts at
+  `slowPeriod + 1` so the transition at index `slowPeriod` is never examined — it is the
+  MA-initialisation artefact guard, now explained in the source. Changing it moves every
+  historical backtest number.
+- **`by_confidence` grades a short-history cross lower than the live app does.** `scoreSignal`
+  drops a factor with no history (RSI needs 15 bars, MACD 34) from the denominator; the backtest
+  scores it `false`, a plain failure. With the default 25/60 the loop never starts before bar 61
+  so all four always apply and the two agree — it only bites the custom periods the route
+  permits (`slow_period` as low as 3). It matters because `by_confidence` is read as "how do
+  high-confidence signals perform", and "high" is not the same word in both places.
+- **`by_confidence` counts only CLOSED trades**, so an open position's confidence appears in no
+  bucket. Correct for hit-rate maths, but the counts do not add up to the signals shown.
 
 ---
 

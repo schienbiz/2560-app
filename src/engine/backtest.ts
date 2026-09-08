@@ -93,6 +93,14 @@ export function runBacktest(symbol: string, ohlcv: OHLCV[], fastPeriod = 25, slo
   const trades: BacktestTrade[] = []
   let open: { date: string; price: number; confidence: Confidence; factorsPassed: number } | null = null
 
+  // Start at slowPeriod + 1, not slowPeriod. The slow MA's first value lands at
+  // index slowPeriod - 1, so beginning one bar later keeps that first value out
+  // of the `previous` slot — a cross measured against the bar where the average
+  // has only just switched on is the initialisation artefact `hasSufficientBars`
+  // exists to reject, not a real crossover. The cost is that a genuine cross AT
+  // index slowPeriod is never taken, so a backtest can miss one signal the live
+  // scanner would act on. Deliberate, and pinned by a test; changing it moves
+  // every historical backtest number, so it is a product call, not a tidy-up.
   for (let i = slowPeriod + 1; i < ohlcv.length; i++) {
     const p25 = ma25[i - 1], c25 = ma25[i]
     const p60 = ma60[i - 1], c60 = ma60[i]
