@@ -1,9 +1,55 @@
 import { clampMessage, LINE_TEXT_LIMIT, TELEGRAM_TEXT_LIMIT } from "../src/utils/message.js"
+import {
+  PushError, isAddressable, isPermanentDeliveryFailure, deactivateRecipient, maskRecipient,
+} from "../src/utils/delivery.js"
+import type { Platform } from "@prisma/client"
 
 // Re-exported so existing importers (and tests) keep their entry point while
 // the implementation lives in src/utils/message.ts, shared with the bot reply
 // path in src/webhooks/telegram.ts.
 export { clampMessage }
+
+export type DeliveryOutcome = "sent" | "deactivated"
+
+/**
+ * Send one notification, and deal with a recipient who can never receive again.
+ *
+ * The three crons all had the same shape — `try { push } catch { count++ }` —
+ * which was right for a transient fault and wrong for a permanent one: a user
+ * who blocked the bot would fail the run every single day, turning the dead-man
+ * alert into noise (the first morning digest under v1.7.0's new reporting hit
+ * exactly that, failed=2 of 6, and both were permanent).
+ *
+ * Returns "deactivated" when the recipient was switched off; THROWS on a
+ * transient failure, which is what should still make a run go red.
+ */
+export async function deliver(
+  platform: Platform,
+  userId: string,
+  message: string,
+): Promise<DeliveryOutcome> {
+  // Decided from the id's shape, before any request: `dev-user` — the identity
+  // the `Bearer dev` backdoor hands out — is not a LINE user id at all, and
+  // sending to it can only ever produce a 400.
+  if (!isAddressable(platform, userId)) {
+    await deactivateRecipient(userId, platform, `not a valid ${platform} recipient id`)
+    return "deactivated"
+  }
+
+  try {
+    if (platform === "line") await pushLine(userId, message)
+    else await pushTelegram(userId, message)
+    return "sent"
+  } catch (err) {
+    if (isPermanentDeliveryFailure(err)) {
+      await deactivateRecipient(userId, platform, (err as PushError).message.slice(0, 120))
+      return "deactivated"
+    }
+    throw err
+  }
+}
+
+export { maskRecipient }
 
 export async function pushLine(userId: string, message: string): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
@@ -24,7 +70,11 @@ export async function pushLine(userId: string, message: string): Promise<void> {
 
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`LINE push failed: ${res.status} ${body}`)
+    // PushError carries the status, so classification never has to parse a
+    // message. Note a LINE 401/403 means OUR token is wrong, not that the
+    // recipient is gone — see src/utils/delivery.ts for why that distinction
+    // has to survive.
+    throw new PushError(`LINE push failed: ${res.status} ${body}`, "line", res.status)
   }
 }
 
@@ -56,6 +106,8 @@ export async function pushTelegram(chatId: string, message: string): Promise<voi
 
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`Telegram push failed: ${res.status} ${body}`)
+    // 403 here means blocked / kicked / account deactivated — always about this
+    // one chat, and the only status `isPermanentDeliveryFailure` acts on.
+    throw new PushError(`Telegram push failed: ${res.status} ${body}`, "telegram", res.status)
   }
 }

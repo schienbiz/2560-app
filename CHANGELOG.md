@@ -1,5 +1,54 @@
 # Changelog
 
+## [1.7.4] — 2026-09-09
+
+The first morning digest after v1.7.0 made push failures visible reported `failed=2` of 6
+recipients — and would have kept reporting it every single day. A dead-man alert that cries wolf
+daily is one that stops being read, which would have quietly undone the point of making failures
+visible at all.
+
+### Fixed
+
+- **Permanent delivery failures no longer fail the run — the recipient is switched off instead.**
+  Reading the live backend's own log named both failures exactly:
+
+  | recipient | error | why |
+  |---|---|---|
+  | `6308157099` (telegram) | `403 Forbidden: bot was blocked by the user` | the user blocked the bot |
+  | `dev-user` (line) | `400 The property, 'to', in the request body is invalid` | not a LINE id at all |
+
+  `dev-user` is the identity `src/auth.ts` hands out for the `Bearer dev` development backdoor.
+  It has held an active BTCUSDT alert since **2026-04-11** and has been failing silently for five
+  months — the app shares ONE Neon database, so a local dev session writes straight into
+  production data.
+
+  All three crons now go through `cron/notify.ts::deliver`, which returns `"deactivated"` for a
+  recipient who can never receive again. Their alerts are flipped to `active: false` (reversible,
+  nothing deleted), the fact is reported in the result body and the run stays green. A transient
+  failure still throws and still turns the run red, which is the whole point.
+
+### The classification is deliberately narrow
+
+Calling a transient fault permanent would silently switch off a real user's alerts, so only two
+things count as permanent, and both are pinned by tests:
+
+- an id that is not addressable on its platform, decided from the id's **shape before any request**
+  — so it can never depend on an error string;
+- **Telegram HTTP 403** on `sendMessage`, which always means blocked / kicked / deactivated.
+
+Everything else is transient, and the tests that matter most are the negative ones:
+
+- **LINE 401/403 means OUR channel access token is wrong, not that the recipient is gone.**
+  Treating it as permanent would deactivate every LINE user the moment a token rotation went wrong.
+- **LINE 400 is ambiguous** — bad recipient or bad message — so it is never grounds for
+  deactivation. The recipient half is already covered by the shape check, without guessing.
+- 429 / 5xx / timeouts are what retries are for.
+
+`PushError` now carries the HTTP status so classification never parses a message.
+
+275 tests (+15), `tsc --noEmit` clean, 7/7 mutants killed — including "any 4xx is permanent" and
+"LINE 400 is permanent", the two mistakes that would have been most expensive.
+
 ## [1.7.3] — 2026-09-09
 
 Fixes a defect **introduced by v1.7.0's own benchmark-index refresh**: it stored the session's

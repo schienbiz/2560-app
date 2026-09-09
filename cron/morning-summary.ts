@@ -13,14 +13,12 @@ import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.j
 import { getCachedOHLCVByBarAge } from "../src/cache.js"
 import { fetchDaysFor } from "../src/utils/ohlcv.js"
 import { morningInsight, hasAnyProviderKey, type SignalHistoryEntry } from "../src/services/ai.js"
-import { pushLine, pushTelegram } from "./notify.js"
+import { deliver, maskRecipient } from "./notify.js"
 import { fmtPrice } from "./scan.js"
 import type { ChartData } from "../src/engine/types.js"
 
-async function push(platform: string, userId: string, msg: string) {
-  if (platform === "line") await pushLine(userId, msg)
-  else await pushTelegram(userId, msg)
-}
+// Delivery (and the handling of a recipient who can never receive again) lives
+// in cron/notify.ts so all three crons behave identically.
 
 export async function runMorningSummary() {
   if (!hasAnyProviderKey()) {
@@ -71,6 +69,9 @@ export async function runMorningSummary() {
   // Counted and returned, not just logged: the /internal endpoint reports it so
   // the GitHub workflow can fail on a run where every push was rejected.
   let failedPushes = 0
+  // Recipients switched off this run because they can never receive again.
+  // Reported but deliberately NOT a failure — see cron/notify.ts::deliver.
+  const deactivated: string[] = []
 
   for (const [, userAlerts] of byUser) {
     const { user_id, platform } = userAlerts[0].watchlist
@@ -138,7 +139,14 @@ export async function runMorningSummary() {
       : "🌅 今天自選股全部平靜，沒有活躍的黃金交叉或死亡交叉訊號。"
 
     try {
-      await push(platform, user_id, msg)
+      const outcome = await deliver(platform, user_id, msg)
+      if (outcome === "deactivated") {
+        // Permanently unreachable — switched off, reported, and NOT counted as
+        // a failure. Counting it would fail this run every single day and turn
+        // the dead-man alert into noise.
+        deactivated.push(`${platform}:${maskRecipient(user_id)}`)
+        continue
+      }
       totalUsers++
       totalSymbolsSent += lines.length
       console.log(`  ✓ Morning summary → ${user_id} (${platform}), ${lines.length} symbols`)
@@ -148,6 +156,8 @@ export async function runMorningSummary() {
     }
   }
 
-  console.log(`Morning summary complete. Sent to ${totalUsers} users, ${totalSymbolsSent} symbols total, ${failedPushes} push failures.`)
-  return { users: totalUsers, symbols: totalSymbolsSent, failed: failedPushes }
+  console.log(`Morning summary complete. Sent to ${totalUsers} users, ${totalSymbolsSent} symbols total, ` +
+              `${failedPushes} transient failures` +
+              (deactivated.length ? `, deactivated ${deactivated.join(", ")}` : "") + ".")
+  return { users: totalUsers, symbols: totalSymbolsSent, failed: failedPushes, deactivated }
 }

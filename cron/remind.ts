@@ -8,7 +8,7 @@
  */
 
 import { db } from "../src/db.js"
-import { pushLine, pushTelegram } from "./notify.js"
+import { deliver, maskRecipient } from "./notify.js"
 
 type Market = "tw" | "us" | "crypto"
 
@@ -32,6 +32,12 @@ export interface RemindRunResult {
    * instead of going green over a reminder the user never received.
    */
   failed: number
+  /**
+   * Recipients switched off this run because they can never receive again
+   * (blocked the bot, or an id that is not addressable at all). Reported but
+   * deliberately NOT counted as a failure — see cron/notify.ts::deliver.
+   */
+  deactivated: string[]
 }
 
 export async function runRemind(markets?: Market[]): Promise<RemindRunResult> {
@@ -57,14 +63,18 @@ export async function runRemind(markets?: Market[]): Promise<RemindRunResult> {
 
   let sent = 0
   let failed = 0
+  const deactivated: string[] = []
 
   await Promise.allSettled(due.map(async r => {
     try {
       const msg = `🔔 提醒：${r.symbol}${r.note ? `\n${r.note}` : ""}`
-      if (r.platform === "line") {
-        await pushLine(r.user_id, msg)
-      } else {
-        await pushTelegram(r.user_id, msg)
+      const outcome = await deliver(r.platform, r.user_id, msg)
+      if (outcome === "deactivated") {
+        // Unreachable for good. Mark the reminder done so it stops being
+        // retried every day for someone who can never see it.
+        await db.remindMe.update({ where: { id: r.id }, data: { sent: true } })
+        deactivated.push(`${r.platform}:${maskRecipient(r.user_id)}`)
+        return
       }
       await db.remindMe.update({ where: { id: r.id }, data: { sent: true } })
       sent++
@@ -75,6 +85,7 @@ export async function runRemind(markets?: Market[]): Promise<RemindRunResult> {
     }
   }))
 
-  console.log(`Reminders complete. due=${due.length} sent=${sent} failed=${failed}`)
-  return { due: due.length, sent, failed }
+  console.log(`Reminders complete. due=${due.length} sent=${sent} failed=${failed}` +
+              (deactivated.length ? ` deactivated=${deactivated.join(",")}` : ""))
+  return { due: due.length, sent, failed, deactivated }
 }
