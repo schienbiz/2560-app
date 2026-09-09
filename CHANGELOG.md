@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.7.5] — 2026-09-09
+
+Four reminders the user set had been sitting in production since **April 2026**, never delivered
+and never going to be.
+
+### Fixed
+
+- **A missed reminder is no longer permanent and silent.** `runRemind` queried only reminders due
+  TODAY, so one day the cron did not run — or one failed push — left the row `sent = false`
+  forever: never retried, never expired, and still listed as pending by `GET /api/reminders`.
+  Found in production: four rows due 2026-04-10, 04-15 and two on 04-28. Reminders on 04-21 and
+  04-22 had sent fine, so the cron itself was working; the April root cause is not recoverable
+  from here, and does not need to be — the structural flaw is the same whatever caused the miss.
+
+  The query now covers everything still outstanding up to and including today. Anything within a
+  **3-day grace window** is delivered, labelled 「原訂 YYYY-MM-DD，補送」 so a late reminder does
+  not masquerade as one scheduled for today. Late beats never.
+
+- **Anything past the window is expired, not marked sent.** A five-month-old "check X" is noise,
+  so it is abandoned — but recorded as `expired_at`, never as `sent`. Clearing a stuck row by
+  setting `sent = true` would make an undelivered reminder indistinguishable from a delivered
+  one, which is the exact failure mode this codebase keeps turning up. Same rule for a reminder
+  addressed to a recipient who can never receive again: expired, not sent.
+
+- **`GET /api/reminders` excludes expired rows**, so the app stops showing reminders that will
+  never fire.
+
+Expiry is scoped to the running market filter: `remind.yml` handles tw+crypto and `remind-us.yml`
+handles us at a different hour, so a tw run must never abandon a US reminder before its own cron
+has had a turn at it. Pinned by a test.
+
+### Migration
+
+`20260909060000_add_remind_expired_at` — one nullable column, applied to production **before**
+this code deploys.
+
+282 tests (+7), `tsc --noEmit` clean, 8/8 mutants killed — including reverting to the today-only
+query, disabling the grace window, unbounding it, marking expiry as `sent`, and letting one
+market's run expire another's reminders.
+
 ## [1.7.4] — 2026-09-09
 
 The first morning digest after v1.7.0 made push failures visible reported `failed=2` of 6

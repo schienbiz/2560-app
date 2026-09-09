@@ -9,14 +9,20 @@ import { resolveSymbol } from "../utils/symbol.js"
 export const remindersRouter = new Hono()
 remindersRouter.use("*", authMiddleware)
 
-// GET /api/reminders  (upcoming only)
+// GET /api/reminders — still outstanding: not yet delivered, not abandoned.
+//
+// `expired_at` has to be excluded or the list keeps showing reminders that will
+// never fire. Four rows from April 2026 sat here as "pending" for five months
+// because the cron only ever looked at reminders due TODAY, so a missed day was
+// permanent and invisible.
 remindersRouter.get("/", async c => {
   const { userId, platform } = c.get("user")
   const items = await db.remindMe.findMany({
     where: {
-      user_id:  userId,
+      user_id:    userId,
       platform,
-      sent:     false,
+      sent:       false,
+      expired_at: null,
     },
     orderBy: { remind_date: "asc" },
   })

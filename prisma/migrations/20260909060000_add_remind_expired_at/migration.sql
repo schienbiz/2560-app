@@ -1,0 +1,12 @@
+-- AlterTable: record a reminder abandoned without ever being delivered.
+--
+-- `runRemind` queried only reminders due TODAY, so a day it did not run — or a
+-- push that failed — left the row `sent = false` forever: never retried, never
+-- expired, and still displayed as pending by GET /api/reminders. Four such rows
+-- had been sitting there since April 2026 (due 04-10, 04-15 and two on 04-28;
+-- reminders on 04-21 and 04-22 sent fine, so the cron itself was working).
+--
+-- Clearing them by setting `sent = true` would make an undelivered reminder
+-- indistinguishable from a delivered one. Nullable, so applying this ahead of
+-- the code is safe.
+ALTER TABLE "RemindMe" ADD COLUMN "expired_at" TIMESTAMP(3);
