@@ -72,6 +72,18 @@ model RemindMe {
   remind_date DateTime  @db.Date
   note        String?
   sent        Boolean   @default(false)
+  /**
+   * Abandoned without ever being delivered.
+   *
+   * `sent` must keep meaning "the user received this". The cron used to query
+   * only reminders due TODAY, so one missed day was permanent AND silent: the
+   * row stayed sent=false forever and kept showing as pending in the app. Four
+   * such rows sat there from April 2026. Marking them `sent: true` to clear
+   * them would have made an undelivered reminder indistinguishable from a
+   * delivered one — the exact failure mode this codebase keeps finding. This
+   * column records the third state instead.
+   */
+  expired_at  DateTime?
   created_at  DateTime  @default(now())
 
   @@index([remind_date, sent])
