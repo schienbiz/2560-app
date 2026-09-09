@@ -29,12 +29,12 @@ const probeOf = (listed: string[], unknown: string[] = []) => {
 describe("resolveTwSuffix", () => {
   it("resolves a TWSE-listed code to .TW", async () => {
     const p = probeOf(["2330.TW"])
-    expect(await resolveTwSuffix("2330", p.fn)).toEqual({ symbol: "2330.TW", resolved: true })
+    expect(await resolveTwSuffix("2330", p.fn)).toEqual({ symbol: "2330.TW", resolved: true, definitivelyAbsent: false })
   })
 
   it("resolves an OTC code to .TWO — the case the old code got wrong", async () => {
     const p = probeOf(["5230.TWO"])
-    expect(await resolveTwSuffix("5230", p.fn)).toEqual({ symbol: "5230.TWO", resolved: true })
+    expect(await resolveTwSuffix("5230", p.fn)).toEqual({ symbol: "5230.TWO", resolved: true, definitivelyAbsent: false })
     expect(p.calls).toEqual(["5230.TW", "5230.TWO"])   // TWSE first, then TPEx
   })
 
@@ -91,13 +91,37 @@ describe("resolveSymbol", () => {
     expect(p.calls).toEqual(["3176.TW", "3176.TWO"])   // second call hit the memo
   })
 
-  it("does NOT memoise a failure, so an outage cannot pin a wrong answer", async () => {
+  it("does NOT memoise an INCONCLUSIVE failure, so an outage cannot pin a wrong answer", async () => {
     const p = probeOf([], ["4444.TW", "4444.TWO"])
     expect((await resolveSymbol("4444", p.fn)).resolved).toBe(false)
     await resolveSymbol("4444", p.fn)
     // Probed again rather than served from the memo — and only .TW each time,
     // because an inconclusive TWSE answer short-circuits before TPEx.
     expect(p.calls).toEqual(["4444.TW", "4444.TW"])
+  })
+
+  /**
+   * /api/chart/:symbol and /api/backtest/:symbol are public and
+   * unauthenticated, so a code that exists nowhere would otherwise cost two
+   * Yahoo probes plus a fetch on EVERY request for it. A confirmed absence is
+   * as stable a fact as a confirmed listing, so it is remembered — while the
+   * inconclusive case above still is not.
+   */
+  it("DOES memoise a code that both exchanges definitively deny", async () => {
+    const p = probeOf([])                        // both answer a definite "no"
+    expect((await resolveSymbol("9999", p.fn)).resolved).toBe(false)
+    expect(p.calls).toEqual(["9999.TW", "9999.TWO"])
+
+    expect((await resolveSymbol("9999", p.fn)).resolved).toBe(false)
+    expect(p.calls).toEqual(["9999.TW", "9999.TWO"])   // no further round trips
+  })
+
+  it("reports definitivelyAbsent only when BOTH exchanges denied it", async () => {
+    expect((await resolveTwSuffix("9999", probeOf([]).fn)).definitivelyAbsent).toBe(true)
+    // .TW denies, .TWO unreachable → not proven absent, must stay retryable
+    expect((await resolveTwSuffix("9999", probeOf([], ["9999.TWO"]).fn)).definitivelyAbsent).toBe(false)
+    // first probe inconclusive → nothing is proven at all
+    expect((await resolveTwSuffix("9999", probeOf([], ["9999.TW"]).fn)).definitivelyAbsent).toBe(false)
   })
 })
 
@@ -141,13 +165,13 @@ describe("resolveSymbolForRead", () => {
 describe("resolveTwSuffix — probe the suffix the caller already typed first", () => {
   it("a .TWO input costs ONE probe, not a wasted .TW round trip first", async () => {
     const p = probeOf(["5230.TWO"])
-    expect(await resolveTwSuffix("5230", p.fn, "TWO")).toEqual({ symbol: "5230.TWO", resolved: true })
+    expect(await resolveTwSuffix("5230", p.fn, "TWO")).toEqual({ symbol: "5230.TWO", resolved: true, definitivelyAbsent: false })
     expect(p.calls).toEqual(["5230.TWO"])
   })
 
   it("still finds the other exchange when the typed suffix is wrong", async () => {
     const p = probeOf(["5230.TWO"])
-    expect(await resolveTwSuffix("5230", p.fn, "TW")).toEqual({ symbol: "5230.TWO", resolved: true })
+    expect(await resolveTwSuffix("5230", p.fn, "TW")).toEqual({ symbol: "5230.TWO", resolved: true, definitivelyAbsent: false })
     expect(p.calls).toEqual(["5230.TW", "5230.TWO"])
   })
 

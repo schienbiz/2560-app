@@ -9,7 +9,7 @@
  */
 
 import type { Context, Next } from "hono"
-import { createHmac } from "crypto"
+import { createHmac, timingSafeEqual } from "crypto"
 
 export interface AuthUser {
   userId:   string
@@ -84,7 +84,14 @@ function verifyTelegram(initData: string): string | null {
 
     const secret = createHmac("sha256", "WebAppData").update(botToken).digest()
     const expected = createHmac("sha256", secret).update(dataCheckString).digest("hex")
-    if (expected !== hash) return null
+    // Constant-time, like every other secret comparison in this codebase. The
+    // 25cc284 hardening covered INTERNAL_SECRET, the LINE signature and the
+    // Telegram webhook token but missed this one, leaving the Mini App's
+    // initData check as the odd one out. Both sides are fixed-length hex, so
+    // the length guard only rejects a malformed hash — and it is required
+    // because timingSafeEqual throws on differing lengths.
+    const exp = Buffer.from(expected), got = Buffer.from(hash)
+    if (exp.length !== got.length || !timingSafeEqual(exp, got)) return null
 
     const authDate = parseInt(params.get("auth_date") ?? "0", 10)
     if (!authDate || Math.floor(Date.now() / 1000) - authDate > 24 * 60 * 60) return null

@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.7.6] — 2026-09-09
+
+Clears the last seven items the 2026-09-07 review had deferred, and puts a test file on the
+three source files that still had none. The review found P0 bugs in exactly the untested files,
+so this closes that gap rather than adding coverage for its own sake.
+
+### Added
+
+- **Tests for `engine/indicators.ts`, `src/auth.ts` and both webhook handlers** — 54 new tests
+  across three files, the last untested source in the app. 13/13 mutants killed; the no-op
+  control mutant survived. Expected values are derived by hand or from an identity that holds
+  analytically (RSI's mirror symmetry: a series and its negation sum to exactly 100), never by
+  recording whatever the code happened to emit.
+
+  Two fail-open behaviours are now **pinned rather than changed**, because both are load-bearing
+  and neither is currently exposed: the `Bearer dev` backdoor is open whenever `NODE_ENV` is
+  unset, and the Telegram webhook is open whenever `TELEGRAM_WEBHOOK_SECRET` is unset. Verified
+  behaviourally against production — `Authorization: Bearer dev` on `/api/watchlist` answers 401.
+  Note that the Render dashboard is *misleading* here: its env-var API lists `NODE_ENV` as absent
+  on the live service, because it returns only user-defined variables while Render injects
+  `NODE_ENV=production` into a Node service at runtime.
+
+### Fixed
+
+- **The Telegram Mini App's initData HMAC is now compared in constant time.** `25cc284` hardened
+  `INTERNAL_SECRET`, the LINE webhook signature and the Telegram webhook token, but missed this
+  one — leaving the Mini App's own auth as the only secret comparison still using `!==`. Needs an
+  explicit length guard, because `timingSafeEqual` throws when the buffers differ in length; a
+  short forged hash was previously a 500 rather than a 401.
+
+- **`GET /api/signals` no longer reports a database fault as "you have no signals."** Both catches
+  returned `{signals: []}` / `{outcomes: []}` with HTTP 200, so an outage was indistinguishable
+  from an empty account — the graceful-degradation-hides-outage pattern. They now return 500.
+  Both callers already handled it: `reminders.js` renders 「載入失敗，請稍後再試」 and `stats.js`
+  omits the section.
+
+- **`/pulse` now prints the as-of date** (「收盤 YYYY-MM-DD」) under each price. The page serves the
+  last cached bar, so during a Taiwan session it was showing the previous close with nothing to
+  say so. A live-quote overlay still needs a rate-limit story first — the page is unauthenticated.
+
+- **A nonexistent Taiwan code is no longer re-probed on every request.** `resolveTwSuffix` now
+  distinguishes "both exchanges gave a definitive no" from "the source was unreachable", and
+  `resolveSymbol` memoises the former. The distinction already existed inside `ProbeFn`'s
+  false-vs-null; it just was not plumbed out. An inconclusive probe is still never memoised, so a
+  Yahoo outage cannot pin a wrong answer until the next deploy. This matters because
+  `/api/chart/:symbol` and `/api/backtest/:symbol` are public and unauthenticated, and v1.7.1 had
+  made each miss cost two probes plus a fetch.
+
+- **`engine/structure.ts` no longer allocates a reversed copy of the MA array** on every
+  `analyzeChart` / `notifyInsight` / `morningInsight`. The Round-6 `lastNonNull` rewrite had
+  missed this call site. No behaviour change.
+
 ## [1.7.5] — 2026-09-09
 
 Four reminders the user set had been sitting in production since **April 2026**, never delivered

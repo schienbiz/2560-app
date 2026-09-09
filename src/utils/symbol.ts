@@ -60,33 +60,64 @@ export type TwSuffix = "TW" | "TWO"
  * unknown we do NOT fall through and declare the other exchange, because a
  * rate-limited request would then permanently mislabel the listing.
  */
+export interface TwSuffixResult {
+  symbol: string
+  resolved: boolean
+  /**
+   * BOTH exchanges answered a definitive "not here" — the code does not exist.
+   *
+   * Distinct from `resolved: false` caused by an unreachable source, and the
+   * distinction is what makes a negative safe to cache: a real nonexistent code
+   * stays nonexistent, whereas a rate-limited probe must be retried. Without
+   * it, /api/chart/:symbol — public and unauthenticated — re-probes Yahoo twice
+   * plus a fetch on every request for the same bad code.
+   */
+  definitivelyAbsent: boolean
+}
+
 export async function resolveTwSuffix(
   code: string,
   probe: ProbeFn,
   prefer: TwSuffix = "TW"
-): Promise<{ symbol: string; resolved: boolean }> {
+): Promise<TwSuffixResult> {
   const other: TwSuffix = prefer === "TW" ? "TWO" : "TW"
 
   const first = await probe(`${code}.${prefer}`)
-  if (first === true) return { symbol: `${code}.${prefer}`, resolved: true }
+  if (first === true) return { symbol: `${code}.${prefer}`, resolved: true, definitivelyAbsent: false }
 
   // Inconclusive is NOT a "no". Falling through here would let a rate-limited
   // or timed-out request file a TWSE listing as OTC — and a wrong suffix is
   // permanent once written to a watchlist row, a cache key and a
   // signal-history key.
-  if (first === null) return { symbol: `${code}.${prefer}`, resolved: false }
+  if (first === null) return { symbol: `${code}.${prefer}`, resolved: false, definitivelyAbsent: false }
 
   const second = await probe(`${code}.${other}`)
-  if (second === true) return { symbol: `${code}.${other}`, resolved: true }
+  if (second === true) return { symbol: `${code}.${other}`, resolved: true, definitivelyAbsent: false }
 
-  // The preferred exchange said a definitive no and the other did not confirm:
-  // probably listed on the other one but unreachable, or the code does not
-  // exist. Report the guess for display but mark it unresolved so nothing
-  // persists it.
-  return { symbol: `${code}.${other}`, resolved: false }
+  // The preferred exchange said a definitive no. If the other one did too, the
+  // code exists on neither and that is a stable fact worth remembering. If it
+  // was merely unreachable, this stays a "don't know" and must be retried.
+  return {
+    symbol: `${code}.${other}`,
+    resolved: false,
+    definitivelyAbsent: second === false,
+  }
 }
 
-const _memo = new Map<string, string>()   // raw upper → canonical (successes only)
+/**
+ * raw upper → canonical, or `null` for a code that exists on neither exchange.
+ *
+ * Both are stable facts: a listing does not move, and a nonexistent code does
+ * not start existing. An INCONCLUSIVE probe is never stored — a Yahoo outage
+ * must not pin a wrong answer until the next deploy.
+ *
+ * Caching the definite negatives matters because /api/chart/:symbol and
+ * /api/backtest/:symbol are public and unauthenticated: without it, repeated
+ * requests for the same nonexistent 4-digit code cost two probes plus a fetch
+ * every time. Only TW-code-shaped inputs ever reach here, so the map is bounded
+ * by the 4-digit space rather than by whatever a caller sends.
+ */
+const _memo = new Map<string, string | null>()
 
 /** Test hook: clear the resolution memo between cases. */
 export function clearSymbolMemo(): void { _memo.clear() }
@@ -101,8 +132,10 @@ export function clearSymbolMemo(): void { _memo.clear() }
 export async function resolveSymbol(raw: string, probe?: ProbeFn): Promise<ResolvedSymbol> {
   const upper = raw.toUpperCase().trim()
 
-  const memoised = _memo.get(upper)
-  if (memoised) {
+  if (_memo.has(upper)) {
+    const memoised = _memo.get(upper)!
+    // null = known not to exist on either exchange; answer without a round trip.
+    if (memoised === null) return { symbol: upper, assetType: "stock", resolved: false }
     const { adapter } = getAdapter(memoised)
     return { symbol: memoised, assetType: adapter.getAssetType(), resolved: true }
   }
@@ -126,8 +159,10 @@ export async function resolveSymbol(raw: string, probe?: ProbeFn): Promise<Resol
   const prefer = (suffixed?.[2] as TwSuffix | undefined) ?? "TW"
 
   const probeFn: ProbeFn = probe ?? (s => adapter.probe?.(s) ?? Promise.resolve(null))
-  const { symbol, resolved } = await resolveTwSuffix(twCode, probeFn, prefer)
+  const { symbol, resolved, definitivelyAbsent } = await resolveTwSuffix(twCode, probeFn, prefer)
+  // Remember a confirmed listing, and a confirmed absence. Never an unknown.
   if (resolved) _memo.set(upper, symbol)
+  else if (definitivelyAbsent) _memo.set(upper, null)
   return { symbol, assetType: "stock", resolved }
 }
 
