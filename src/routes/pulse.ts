@@ -10,6 +10,17 @@ interface PulseRow {
   signalLabel: string
   count:       number
   close:       string
+  /**
+   * The date of the bar `close` came from.
+   *
+   * This is the newest CACHED close, not a live quote — during a Taiwan session
+   * it is the previous close, and an undated number on a public page reads as
+   * "now". /api/scan got a live-quote overlay in v1.5.1; this page is
+   * unauthenticated and cached for 60 s, so fetching quotes here needs a
+   * rate-limit story first. Until then, saying which day the number is from is
+   * the honest minimum.
+   */
+  asOf:        string
 }
 
 // ─── In-memory cache (60s TTL) ───────────────────────────────────────────────
@@ -75,7 +86,8 @@ async function fetchPulseData(): Promise<PulseRow[]> {
     const sig   = signalMap.get(symbol)
     const ohlcv = priceMap.get(symbol)
     const close = ohlcv?.close != null ? ohlcv.close.toLocaleString("zh-TW") : "─"
-    return { symbol, signalLabel: signalLabel(sig?.signal), count, close }
+    const asOf  = ohlcv?.date != null ? ohlcv.date.toISOString().slice(0, 10) : ""
+    return { symbol, signalLabel: signalLabel(sig?.signal), count, close, asOf }
   })
 
   return rows
@@ -111,7 +123,10 @@ function renderPage(rows: PulseRow[]): string {
       <td style="font-weight:600">${escapeHtml(r.symbol)}</td>
       <td>${r.signalLabel}</td>
       <td>👥 ${r.count} 人</td>
-      <td style="text-align:right">${escapeHtml(r.close)}</td>
+      <td style="text-align:right">
+        ${escapeHtml(r.close)}
+        ${r.asOf ? `<div style="font-size:0.7rem;color:var(--muted);font-weight:400">收盤 ${escapeHtml(r.asOf)}</div>` : ""}
+      </td>
       <td style="text-align:center">
         <button onclick="shareSymbol('${escapeHtml(r.symbol)}','${r.signalLabel}',${r.count})"
           style="background:none;border:1px solid var(--muted);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:0.8rem;color:var(--muted)">

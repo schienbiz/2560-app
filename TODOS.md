@@ -75,7 +75,9 @@ evicts the oldest tokens when the cache exceeds N entries.
 
 **Why:** The current `lineTokenCache` Map grows with every unique LINE token seen.
 For a single user this doesn't matter. For 100+ concurrent users with session rotation,
-the Map could leak memory over time (tokens expire but are only evicted on access).
+the Map could still grow between sweeps. (An hourly `setInterval` in `src/auth.ts` does
+purge expired entries, so this is bounded by an hour of traffic, not truly unbounded — the LRU
+would bound it by SIZE instead, which is the property that actually matters under load.)
 
 **Pros:** Prevents memory leak in multi-user scenario.
 **Cons:** Adds a dependency (`lru-cache` npm package) or requires a manual LRU implementation.
@@ -391,41 +393,52 @@ count will drop slightly and that drop is a correction, not a regression.
 
 ---
 
-## Deferred from the 2026-09-07 exhaustive review (v1.7.0)
+## Deferred from the 2026-09-07 exhaustive review — CLEARED in v1.7.6 (2026-09-09)
 
-The P0/P1 findings from that review were fixed and shipped. These were deliberately left, with
-the reasoning, so they are choices rather than oversights:
+All seven items that review left deferred are now done. Kept here as a record of what was
+decided and why, not as outstanding work.
 
-- **`engine/structure.ts:169-170` still uses `[...ma25].reverse().find(...)`.** The Round-6
-  no-alloc rewrite (`lastNonNull`) missed this one, and `computeStructure` runs on every
-  `analyzeChart` / `notifyInsight` / `morningInsight`. Pure allocation cost, no correctness
-  impact. Fix during any touch of that file.
-- **`src/auth.ts:87` compares the Telegram initData HMAC with `!==`.** The `25cc284` constant-time
-  hardening covered `INTERNAL_SECRET`, the LINE signature and the TG webhook token but missed
-  this one. Remote timing attacks on an HMAC comparison are not practical here; it is an
-  inconsistency, not an exposure.
-- **`routes/signals.ts` returns `{signals: []}` from its catch.** A DB fault is then
-  indistinguishable from "you have no signals" (the graceful-degradation-hides-outage pattern).
-  Needs a UI decision about what an error state should look like before changing.
-- **`/pulse` shows the last cached bar's close with no as-of date and no live-quote overlay**, so
-  during a TW session the public page shows the previous close. `/api/scan` got the overlay in
-  v1.5.1; `/pulse` is unauthenticated and cached 60s, so adding quote fetches there needs a
-  rate-limit story first. Minimum viable fix: print the bar date next to the price.
-- **A reminder whose push fails is still lost.** v1.7.0 counts the failure and fails the workflow,
-  but the row stays `sent:false` and the query only looks at today, so nothing retries or expires
-  it. Real fix: a bounded retry window, or an `attempts` column with an expiry.
-- **The public chart/backtest routes are an unauthenticated proxy to Yahoo, and v1.7.1 made
-  each miss slightly more expensive.** A request for a 4-digit code that resolves to nothing
-  now costs up to two probes plus a fetch, and *inconclusive* resolutions are deliberately not
-  memoised (so an outage cannot pin a wrong answer), which means a scan of nonexistent codes
-  re-probes every time. The route already proxied Yahoo unauthenticated before this, so the
-  marginal change is small and the app has one user — but the amplification is real. Fix
-  sketch: have `resolveTwSuffix` distinguish a DEFINITIVE "neither exchange has it" from an
-  inconclusive one, and memoise only the former (that distinction already exists in `ProbeFn`'s
-  false-vs-null, it just isn't plumbed out); or rate-limit the public routes.
-- **`engine/indicators.ts`, `src/auth.ts` and both webhook handlers still have no test file.**
-  The 2026-09-07 review found P0 bugs in exactly the untested files.
-  (`engine/backtest.ts` — ✅ covered 2026-09-08, 23 tests, 12/12 mutants killed.)
+- ✅ **`engine/structure.ts` used `[...ma25].reverse().find(...)`** → now `lastNonNull()`, matching
+  the Round-6 rewrite that had missed this one call site. Pure allocation, no behaviour change.
+- ✅ **`src/auth.ts` compared the Telegram initData HMAC with `!==`** → now `timingSafeEqual` with
+  the length guard it requires (it throws on differing lengths). This was the last secret
+  comparison in the codebase not hardened by `25cc284`.
+- ✅ **`routes/signals.ts` returned `{signals: []}` from its catch** → now HTTP 500. A DB fault
+  used to be indistinguishable from "you have no signals". Checked both callers before changing:
+  `reminders.js` renders 「載入失敗，請稍後再試」 and `stats.js` omits the section — both already
+  had catch blocks, so no UI work was needed and the decision that was blocking this turned out
+  to be already made.
+- ✅ **`/pulse` showed a cached close with no as-of date** → each row now prints 「收盤 YYYY-MM-DD」
+  under the price. This is the minimum viable fix only. **Still open:** a live-quote overlay on
+  `/pulse`, which needs a rate-limit story first because the page is unauthenticated.
+- ✅ **A reminder whose push failed was lost** → fixed in v1.7.5 (3-day grace window, delivery
+  labelled 「原訂 …，補送」, older rows expired via `expired_at` rather than a lying `sent:true`).
+- ✅ **The public chart/backtest routes re-probed Yahoo for every nonexistent code** →
+  `resolveTwSuffix` now returns `definitivelyAbsent`, and `resolveSymbol` memoises a confirmed
+  absence as well as a confirmed listing. An *inconclusive* probe is still never memoised, so a
+  Yahoo outage cannot pin a wrong answer until the next deploy. **Still open:** rate-limiting the
+  public routes; they remain an unauthenticated proxy, now with a bounded miss cost.
+- ✅ **`engine/indicators.ts`, `src/auth.ts` and both webhook handlers had no test file** →
+  `tests/indicators.test.ts` (18), `tests/auth.test.ts` (19), `tests/webhooks.test.ts` (17).
+  13/13 mutants killed, no-op mutant survived. Two fail-open behaviours are now *pinned* rather
+  than changed, because both are load-bearing and neither is currently exposed:
+  the `Bearer dev` backdoor is open whenever `NODE_ENV` is unset, and the Telegram webhook is
+  open whenever `TELEGRAM_WEBHOOK_SECRET` is unset.
+
+  ⚠️ **Do not verify the first one from the Render dashboard.** `GET /v1/services/:id/env-vars`
+  reports `NODE_ENV` as absent on `two560-app-2` (the live backend), because that endpoint
+  returns only user-defined variables while Render injects `NODE_ENV=production` for a Node
+  service at runtime. Reading the dashboard alone gives exactly the wrong answer. Verified
+  behaviourally instead on 2026-09-09:
+  `curl -H 'Authorization: Bearer dev' https://two560-app.atungc2020.workers.dev/api/watchlist`
+  → **401**. Both backends do set `TELEGRAM_WEBHOOK_SECRET` (48 chars, checked via the API).
+
+### Still open from the above
+
+- A live-quote overlay on `/pulse` (needs a rate-limit story; the page is unauthenticated).
+- Rate-limiting the public chart/backtest routes.
+- `src/auth.ts`'s LINE token cache is still an unbounded `Map` with an hourly sweep — see the
+  LRU item earlier in this file. One user, so it is not a live risk.
 
 ---
 

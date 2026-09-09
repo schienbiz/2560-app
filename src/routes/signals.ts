@@ -95,8 +95,14 @@ signalsRouter.get("/outcomes", async c => {
     }))
 
     return c.json({ outcomes })
-  } catch {
-    return c.json({ outcomes: [] })
+  } catch (err) {
+    // NOT `{outcomes: []}`. An empty success asserts "you have no results yet",
+    // which is a different fact from "the database did not answer" — and the
+    // caller cannot tell them apart. stats.js already treats a rejected request
+    // as best-effort and omits the section, so the rendered page is unchanged;
+    // what changes is that the server stops claiming something it does not know.
+    console.error("[signals/outcomes]", err)
+    return c.json({ error: "Failed to load outcomes" }, 500)
   }
 })
 
@@ -121,7 +127,11 @@ signalsRouter.get("/", async c => {
     })
 
     return c.json({ signals })
-  } catch {
-    return c.json({ signals: [] })
+  } catch (err) {
+    // Same reasoning as /outcomes above. reminders.js already renders
+    // 「載入失敗，請稍後再試」 when this rejects, so the user now sees the truth
+    // instead of an empty history that looks like "no alerts have ever fired".
+    console.error("[signals]", err)
+    return c.json({ error: "Failed to load signals" }, 500)
   }
 })

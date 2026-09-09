@@ -12,6 +12,7 @@
  */
 
 import type { OHLCV } from "./types.js"
+import { lastNonNull } from "./ma.js"
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -166,8 +167,12 @@ export function computeStructure(
   const swings  = labelSwings(pivots)
 
   const close  = ohlcv[ohlcv.length - 1].close
-  const curMa25 = [...ma25].reverse().find(v => v != null) ?? null
-  const curMa60 = [...ma60].reverse().find(v => v != null) ?? null
+  // lastNonNull, not [...ma].reverse().find(...): the spread copies the whole
+  // series and reverse copies it again — twice per call, and computeStructure
+  // runs on every analyzeChart / notifyInsight / morningInsight. The Round-6
+  // no-alloc pass replaced this pattern everywhere else and missed these two.
+  const curMa25 = lastNonNull(ma25)
+  const curMa60 = lastNonNull(ma60)
 
   const { phase, bias } = classifyPhase(close, curMa25, curMa60)
 
