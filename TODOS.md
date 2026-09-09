@@ -346,7 +346,7 @@ every workflow reads the result body with `jq` instead of trusting the 200.
 
 ---
 
-## First manual A/E pull → Phase 1 (actuarial layer) go/no-go
+## First manual A/E pull → Phase 1 (actuarial layer) go/no-go — ✅ 已決策 2026-09-09：NO-GO
 
 **What:** Run `npx tsx scripts/ae-report.ts` (read-only, one command) and read it in two passes:
 §1 coverage must be clean (matured crosses all carry 20d outcome + benchmark — if not, fix the
@@ -390,6 +390,57 @@ backfill on the next runs rather than aging out.
 against the criteria above — this time on clean coverage. Note that the canonical-symbol merge
 also removes ~6 duplicate cross rows (2330 was counted as two stocks), so the matured-cross
 count will drop slightly and that drop is a correction, not a regression.
+
+### ✅ 決策已作成 2026-09-09：**Phase 1 NO-GO**（不建 actuarial layer）
+
+在 v1.7.6（`fbfa72f`）部署後、outcome cron 連續 6 次成功之下重跑。**三個「值得建」條件全部不成立**：
+
+| 預寫條件 | 實測 | 判定 |
+|---|---|---|
+| 手動拉取費力／錯過觸發日 | `time npx tsx scripts/ae-report.ts` = **3.5 秒**；觸發日 10-15 未到，09-02 提早觸發後已連拉四次，沒有被遺忘 | ❌ 不成立 |
+| §2 已有 tier 偏離期望值 | **沒有任何一格的 95% Wilson 區間排除其期望值**：death all 6/9=67% CI[35%,88%] vs 52%（binom p=0.51）、golden all 6/13=46% CI[23%,71%] vs 54%（p=0.59）、death ≥4/5 1/1 CI[21%,100%] vs 72%（p=1.00） | ❌ 不成立 |
+| 強確認死叉 5/5 開始出現 | **n=0**。9 次死叉的強確認分佈上限是 4/5，且 4/5 只有 1 筆 | ❌ 不成立 |
+
+「不值得建」條件成立：腳本 3.5 秒、每一格都是「資料不足」、沒有任何數字改變任何決策。
+**Phase 1 就是「一個行事曆提醒 + 這支腳本」，這是當初就寫明的正當結果，不是失敗。**
+
+**§1 覆蓋首次全 horizon 乾淨**（不只 20d）：5d 22/22、10d 21/21、20d 17/17，outcome 與
+benchmark 皆零缺口；無重複列、無裸 4 碼（canonical 合併守住了）；17 檔不重複標的。
+
+#### ⚠️ 但這次分析推翻了「再等就會有答案」這個前提
+
+實測累積速率（觀測期 4.6 個月、27 次交叉、5.9 次/月）：
+
+| cell | n | 速率 | 距 n=20 |
+|---|---|---|---|
+| golden all | 18 | 3.93/月 | **~1 個月** |
+| death all | 9 | 1.97/月 | ~6 個月 |
+| death ≥4/5 | 1 | 0.22/月 | **87 個月（7.2 年）** |
+| death 5/5 | 0 | **0/月** | **永不** |
+
+原本的計畫寫「tier 級別的格子需要 12–18 個月才能 n≥20」。**實測是 87 個月與「永不」。**
+所以「等到 n≥20 再判」對於**唯一有引用統計數字的兩個 tier** 是一個永遠達不到的里程碑
+（[[feedback_threshold_beyond_retention.md]] 同型：閾值訂在不可達處，門永遠不會響）。
+
+而唯一會在一兩個月內達標的 `golden all`，**在產品裡沒有引用任何精準度數字** —— 也就是說，
+第一個真正有統計意義的 A/E 判定，會落在最不影響決策的那一格。
+
+#### 三個應該修、但都不是 Phase 1 的東西
+
+1. **重設觸發條件。** 把「n≥20」換成可達的：日期（建議 2026-12-15）**或** death 5/5 首次
+   出現（n≥1）—— 後者才是真正會改變決策的事件（83% 那行第一次被送出的時刻）。
+2. **`MIN_CELL_N = 20` 偵測力不足。** 要把 A/E=1.3（腳本自己的出界邊界）推出 95% 區間，
+   death all / golden all 需要 **n≈35**；而 death 5/5 需要 **n>4000** —— 因為 0.83×1.3=1.08>1，
+   **高側邊界在數學上不可達**，[0.7,1.3] 這個對稱帶對 p0=83% 的格子根本不適用（只有低側
+   0.58 測得到）。現況是：n 一過 20 就會印出「A/E=x.xx ✓」，但區間仍橫跨整條帶 —— 會在
+   還分不出來的時候給出看起來像結論的東西。
+3. **§1 從不檢查 5d/10d 覆蓋，但 §2 的「資料不足」閘門是用 5d 分母驅動的。** 今天實查是乾淨的
+   （這次沒藏東西），但這個盲點是結構性的：驗證的欄位和判定的欄位不是同一個。
+
+**「回測5日精準度83%」這行從來沒有被送出過** —— 已查證 `isStrong = applicable===5 && passed===5`，
+而庫裡 5/5 是 0 筆。所以目前沒有「拿零樣本的數字對使用者說話」這個活的問題，
+criterion (c) 擔心的情境尚未發生。
+
 
 ---
 
