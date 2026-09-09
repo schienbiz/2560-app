@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.7.3] — 2026-09-09
+
+Fixes a defect **introduced by v1.7.0's own benchmark-index refresh**: it stored the session's
+still-forming bar, permanently.
+
+### Fixed
+
+- **`bulkInsertOHLCV` now writes settled days only.** Its premise is that historical bars are
+  immutable, so `createMany({ skipDuplicates: true })` is safe — but a bar dated TODAY is not
+  historical. Yahoo's chart API returns the session's still-forming candle, and skipDuplicates
+  then makes that snapshot permanent: a later fetch of the settled close is *skipped*, never
+  applied. Nothing could repair it.
+
+  Measured in production. The daily outcome cron is scheduled for 10:00 UTC, but GitHub started
+  it at **14:12 UTC** — 42 minutes after the 13:30 US open — and its previous three starts were
+  13:26, 15:33 and 14:12, so landing inside the US session is the normal case, not bad luck.
+  Result:
+
+  | | cached | actual settled | |
+  |---|---|---|---|
+  | `SPY 2026-09-08` | 766.395 | 765.960 | mid-session snapshot, frozen |
+  | `0050.TW 2026-09-08` | 109.900 | *no such bar* | provisional bar; the source no longer reports it |
+  | `BTCUSDT` | — | — | clean: `normalizeKrakenBars` already drops the uncommitted candle |
+
+  The consequence was not cosmetic: `benchmark_*` values were computed against an intraday
+  price, and the strong-death `market` factor reads the same series for its MA200.
+
+- **`upsertOHLCV` deliberately does NOT do the same**, and a test now pins that. The scan reads
+  the cache and fires on the last bar's transition, so today's settled bar has to be there; that
+  path updates on conflict, so an intraday write is corrected by the next read —
+  `isCacheStale` gives a today-dated stock bar a 30-minute TTL precisely so it is. Applying the
+  settled-only rule there would stop the scanner ever seeing the day it is meant to act on.
+
+The cut is the UTC day boundary, which is conservative: a US bar is settled from 20:00 UTC yet is
+still dropped until midnight. That costs the benchmark at most one day of lag and is pinned by a
+test as a deliberate choice — a late number beats a wrong one, and there is no per-market close
+time available here.
+
+### Repair
+
+`scripts/repair-forming-index-bars.ts` (dry-run by default) removes the two poisoned rows and
+clears the six benchmark values derived from them, so the next outcome pass recomputes from
+settled data — that pass only ever fills nulls and never overwrites, which is why they must be
+nulled rather than left.
+
+258 tests (+10), `tsc --noEmit` clean, 6/6 mutants killed.
+
 ## [1.7.2] — 2026-09-08
 
 ### Tests
