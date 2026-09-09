@@ -141,22 +141,59 @@ export async function getCachedOHLCVByBarAge(
 }
 
 /**
- * Bulk-insert bars in a single statement, skipping rows that already exist.
+ * Drop any bar dated today (or later) — settled days only.
+ *
+ * `bulkInsertOHLCV`'s whole premise is that historical bars are immutable, so
+ * insert-or-skip is safe. A bar dated TODAY is not historical: Yahoo's chart
+ * API hands back the session's still-forming candle, and skipDuplicates then
+ * makes that snapshot PERMANENT — a later fetch of the settled close is
+ * skipped, not applied.
+ *
+ * Measured in production on 2026-09-08. The daily outcome cron is scheduled for
+ * 10:00 UTC but GitHub ran it at 14:12 UTC (its last three starts were 13:26,
+ * 15:33 and 14:12 — routinely after the 13:30 US open), so the benchmark-index
+ * refresh introduced in v1.7.0 stored SPY's mid-session price of 766.395 as the
+ * 2026-09-08 close. The real close was 765.960, and the row could never
+ * self-correct. 0050.TW was worse: fetched at 04:47 UTC while the Taiwan
+ * session was still open, it stored a provisional bar the source itself no
+ * longer reports at all.
+ *
+ * `upsertOHLCV` deliberately does NOT do this: the scan needs today's settled
+ * bar in the cache (it is the bar `detectCross` fires on), and that path
+ * updates on conflict, so an intraday write there is corrected by the next
+ * read — `isCacheStale` gives a today-dated stock bar a 30-minute TTL exactly
+ * so that happens.
+ *
+ * `>= today` rather than `=== today` also discards future-dated garbage.
+ */
+export function settledBarsOnly(bars: OHLCV[], now: number = Date.now()): OHLCV[] {
+  const todayUTC = new Date(now).toISOString().slice(0, 10)
+  return bars.filter(b => b.date < todayUTC)
+}
+
+/**
+ * Bulk-insert SETTLED bars in a single statement, skipping rows that exist.
  *
  * For deep-history backfill (strong-death's ~500-bar series) the upsert chain
  * below is pathological: ~500 sequential round trips ≈ minutes at WAN latency
  * and tens of seconds cross-region, measured 75× slower than one createMany.
- * Historical bars are immutable so insert-or-skip semantics are correct; the
- * shallow scan path keeps using upsertOHLCV to refresh the newest bars.
+ * Insert-or-skip is correct for settled bars — see settledBarsOnly for why
+ * today's bar has to be excluded, and why the shallow scan path (upsertOHLCV)
+ * must not do the same.
+ *
+ * Callers are unaffected in what they SEE: both read the adapter's return value
+ * for their own maths and treat the cache purely as a write-behind, so a
+ * missing today-bar costs at most one extra fetch on the next run.
  */
 export async function bulkInsertOHLCV(
   symbol: string,
   source: string,
   bars: OHLCV[]
 ): Promise<void> {
-  if (bars.length === 0) return
+  const settled = settledBarsOnly(bars)
+  if (settled.length === 0) return
   await db.ohlcvCache.createMany({
-    data: bars.map(b => ({
+    data: settled.map(b => ({
       symbol, source, date: new Date(b.date),
       open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume,
     })),
