@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.7.7] — 2026-09-09
+
+The three follow-ups the Phase 1 NO-GO decision left behind, in the order they were listed.
+The decision itself does not change: every cell is still 資料不足, and no tier is drifting.
+
+### Fixed
+
+- **The Phase 1 re-trigger was unreachable.** It was "n ≥ 20 matured crosses", but measured
+  accrual says `death ≥4/5` needs ~87 months and `death 5/5` accrues at a rate of zero — so for
+  the only two tiers that carry a quoted statistic, the gate could never ring. It is now a date
+  (2026-12-15) **or** the first strong-death 5/5 ever firing, which is the event that actually
+  changes something: the moment 「回測5日精準度83%」 is sent to a user for the first time. A new
+  §3 prints both conditions' live status, so the trigger no longer depends on anyone remembering
+  the criteria.
+
+- **`MIN_CELL_N = 20` was under-powered, and the A/E band did not fit half the cells.** The
+  verdict no longer keys off a flat sample-size threshold; it asks whether the 95% Wilson
+  interval actually **excludes** the expected. Covering it with enough data to have caught a
+  band-edge deviation is 一致; covering it without that much data is 資料不足, and the report now
+  prints how many more observations are needed instead of leaving the reader to guess.
+
+  Measured: to push an A/E of 1.30 — the script's own ⚠️出界 edge — outside the interval takes
+  n≈40 for `death all` and n≈37 for `golden all`. At the old n=20 the interval still spanned the
+  whole band, so the gate printed `A/E=x.xx ✓` at a size where ✓ and ⚠️ were not distinguishable.
+  For `death 5/5` the high edge is **arithmetically unreachable** — 0.83 × 1.3 = 1.079 is not a
+  probability — so a symmetric ±30% band never applied to that cell at all; only the low edge
+  (n≈9) is testable, and the report now says so.
+
+  A first cut of this estimate rounded the target to an integer count and was **not monotone in
+  n**: it answered n≈6 for the 5/5 low edge while n=7, 8 and 10 did not exclude at all. The
+  figures above come from the exact rate, and a test pins the floor by checking that every larger
+  n still excludes.
+
+- **§1 checked only the 20d horizon while §2's 資料不足 gate ran on the 5d denominator** — the
+  field that was verified was never the field that decided the verdict. All three horizons are
+  now checked, each against its own maturity rule, with offending rows named per horizon.
+
+  Two same-root defects fell out of that: the 20d maturity line was `age > 28`, the *nominal*
+  window, but the value is the first close on or after +28d and `WINDOW_END_CAL_DAYS = 33` exists
+  precisely because that bar can arrive as late as +33d — so rows aged 29–33 days were reported as
+  "matured but empty" when they simply had no bar yet. The line is now derived from a 5-day slack
+  rather than chosen. This gate has already cried wolf twice (2026-09-02, 2026-09-08), and on the
+  first occasion the false alarm was accepted as "data availability" while masking a real defect
+  underneath. Separately, rows past `STALE_AGE_DAYS` are counted apart, because the cron has
+  deliberately abandoned them and a permanent warning is an ignored warning.
+
+  `ELIGIBLE_AGE_DAYS` and `STALE_AGE_DAYS` moved into `outcome-math.ts` so the cron and the
+  report reason about one copy of the numbers rather than two.
+
+### Added
+
+- **`src/utils/ae-stats.ts` + `tests/ae-stats.test.ts`** — 32 tests, 13/13 mutants killed, no-op
+  control survived. Expected values come from analytic identities, including the **defining
+  property** of the Wilson interval (its bounds solve (p̂ − p)² = z²·p(1−p)/n). That test is
+  load-bearing: mutation testing showed a margin missing its `/denominator` factor still passes
+  mirror symmetry, still contains its point estimate, and still narrows with n — only the
+  definition catches it. The same run exposed the `n<=0` guard in `wilsonIntervalFromRate` as
+  unreachable dead code, since `wilsonInterval` carried a duplicate; there is now one guard.
+
 ## [1.7.6] — 2026-09-09
 
 Clears the last seven items the 2026-09-07 review had deferred, and puts a test file on the
