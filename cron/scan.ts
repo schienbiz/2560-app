@@ -21,7 +21,7 @@ import type { MarketBucket } from "../src/utils/strong-death.js"
 import { notifyInsight } from "../src/services/ai.js"
 import { fetchFearGreed, scoreFearGreed } from "../src/services/news.js"
 import type { SentimentResult } from "../src/services/news.js"
-import { pushLine, pushTelegram } from "./notify.js"
+import { deliver, maskRecipient } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 import type { OHLCV, AssetType } from "../src/engine/types.js"
 
@@ -73,10 +73,8 @@ function deepLink(symbol: string): string {
   return `\n${APP_URL}/?symbol=${encodeURIComponent(symbol)}`
 }
 
-async function push(platform: string, userId: string, msg: string) {
-  if (platform === "line") await pushLine(userId, msg)
-  else await pushTelegram(userId, msg)
-}
+// Delivery — and the handling of a recipient who can never receive again —
+// lives in cron/notify.ts::deliver, so all three crons behave identically.
 
 export interface ScanRunResult {
   /** Alerts selected for this market bucket. */
@@ -101,6 +99,14 @@ export interface ScanRunResult {
   alertFailed: number
   /** Symbols deliberately skipped: too few bars to trust a slow-MA cross. */
   insufficientData: string[]
+  /**
+   * Recipients switched off this run because they can never receive again —
+   * they blocked the bot, or their id is not addressable at all. Reported but
+   * deliberately NOT counted as a failure: counting them would turn every scan
+   * red for as long as one blocked chat remains on the watchlist, and a
+   * dead-man alert that fires daily stops being read.
+   */
+  deactivated: string[]
 }
 
 export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
@@ -116,7 +122,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
   const marketLabel = markets ? ` [${markets.join(",")}]` : ""
   console.log(`Scanning ${alerts.length}/${allAlerts.length} watchlist alerts${marketLabel}...`)
   const empty: ScanRunResult = {
-    alerts: 0, symbols: 0, notified: 0, fetchFailed: [], alertFailed: 0, insufficientData: [],
+    alerts: 0, symbols: 0, notified: 0, fetchFailed: [], alertFailed: 0, insufficientData: [], deactivated: [],
   }
   if (alerts.length === 0) { console.log("Scan complete."); return empty }
 
@@ -157,6 +163,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
   let notified = 0
   let alertFailed = 0
   const insufficientData = new Set<string>()
+  const deactivated = new Set<string>()
 
   await Promise.allSettled(alerts.map(async alert => {
     const { watchlist } = alert
@@ -267,8 +274,8 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                 insight,
               ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
-              await push(watchlist.platform, watchlist.user_id, msg)
-              notified++
+              if (await deliver(watchlist.platform, watchlist.user_id, msg) === "sent") notified++
+              else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(key) }
 
               await db.signalHistory.upsert({
                 where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal } },
@@ -338,8 +345,8 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                   insight,
                 ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
-                await push(watchlist.platform, watchlist.user_id, proximityMsg)
-                notified++
+                if (await deliver(watchlist.platform, watchlist.user_id, proximityMsg) === "sent") notified++
+                else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(proxKey) }
 
                 await db.signalHistory.upsert({
                   where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_golden" } },
@@ -391,8 +398,8 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                 try {
                   const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${fmtPrice(latest.close)}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
 
-                  await push(watchlist.platform, watchlist.user_id, exitMsg)
-                  notified++
+                  if (await deliver(watchlist.platform, watchlist.user_id, exitMsg) === "sent") notified++
+                  else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(exitKey) }
 
                   await db.signalHistory.upsert({
                     where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_exit" } },
@@ -436,12 +443,14 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
     fetchFailed,
     alertFailed,
     insufficientData: [...insufficientData],
+    deactivated:      [...deactivated],
   }
   console.log(
     `Scan complete. alerts=${result.alerts} symbols=${result.symbols} notified=${result.notified} ` +
     `alertFailed=${result.alertFailed}` +
     (fetchFailed.length ? ` fetchFailed=${fetchFailed.join(",")}` : "") +
-    (result.insufficientData.length ? ` insufficientData=${result.insufficientData.join(",")}` : "")
+    (result.insufficientData.length ? ` insufficientData=${result.insufficientData.join(",")}` : "") +
+    (result.deactivated.length ? ` deactivated=${result.deactivated.join(",")}` : "")
   )
   return result
 }

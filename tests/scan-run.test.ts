@@ -22,6 +22,8 @@ const pushTelegram  = vi.fn()
 const adapterFetch  = vi.fn()
 const claim         = vi.fn()
 const release       = vi.fn()
+/** Recipients the mocked deliver() should report as permanently unreachable. */
+const deactivateFor = new Set<string>()
 
 vi.mock("../src/db.js", () => ({
   db: {
@@ -40,9 +42,16 @@ vi.mock("../src/utils/notify-dedup.js", () => ({
   claimNotification:   (...a: unknown[]) => claim(...a),
   releaseNotification: (...a: unknown[]) => release(...a),
 }))
+// Mirrors the real cron/notify.ts::deliver — it dispatches by platform and
+// returns "sent" | "deactivated", propagating a transient failure as a throw.
 vi.mock("../cron/notify.js", () => ({
-  pushLine:     (...a: unknown[]) => pushLine(...a),
-  pushTelegram: (...a: unknown[]) => pushTelegram(...a),
+  deliver: async (platform: string, userId: string, msg: string) => {
+    if (deactivateFor.has(`${platform}:${userId}`)) return "deactivated"
+    if (platform === "line") await pushLine(userId, msg)
+    else await pushTelegram(userId, msg)
+    return "sent"
+  },
+  maskRecipient: (s: string) => s,
 }))
 vi.mock("../src/services/ai.js", () => ({ notifyInsight: async () => "" }))
 vi.mock("../src/services/news.js", () => ({
@@ -102,6 +111,7 @@ describe("runScan", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     ledger = new Set()
+    deactivateFor.clear()
     historyUpsert.mockResolvedValue(undefined)
     historyFirst.mockResolvedValue(null)
     pushLine.mockResolvedValue(undefined)
@@ -197,6 +207,36 @@ describe("runScan", () => {
     expect(r.insufficientData).toEqual(["SPCX"])
     expect(r.fetchFailed).toEqual([])
     expect(r.notified).toBe(0)
+  })
+
+  /**
+   * A recipient who blocked the bot is permanently unreachable. Counting that
+   * as a failure would turn every scan red for as long as they stay on the
+   * watchlist — and a dead-man alert that fires daily stops being read. The
+   * first morning digest under the new reporting hit exactly this: 2 of 6
+   * recipients were permanent (one blocked the bot, one was `dev-user`).
+   */
+  it("a permanently unreachable recipient is reported, not counted as a failure", async () => {
+    deactivateFor.add("telegram:blocked")
+    findAlerts.mockResolvedValue([alertFor("blocked", "telegram"), alertFor("ok", "telegram")])
+
+    const r = await runScan()
+
+    expect(r.deactivated).toEqual(["telegram:blocked"])
+    expect(r.alertFailed).toBe(0)          // must NOT fail the run
+    expect(r.notified).toBe(1)             // only the reachable one counts
+    expect(pushTelegram.mock.calls.map(c => c[0])).toEqual(["ok"])
+  })
+
+  it("hands the claim back for a deactivated recipient — nothing was delivered", async () => {
+    deactivateFor.add("telegram:blocked")
+    findAlerts.mockResolvedValue([alertFor("blocked", "telegram")])
+
+    await runScan()
+
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release.mock.calls[0][0]).toMatchObject({ userId: "blocked" })
+    expect(ledger.size).toBe(0)
   })
 
   it("one symbol's failure does not stop the others", async () => {
