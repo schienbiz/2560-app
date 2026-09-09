@@ -136,7 +136,10 @@ describe("resolveAuth — Telegram initData", () => {
 describe("resolveAuth — LINE", () => {
   beforeEach(() => {
     vi.stubEnv("NODE_ENV", "production")
-    vi.stubEnv("LINE_CHANNEL_ID", "1000000000")
+    // Deliberately not a 10-digit number: a synthetic numeric channel id trips the
+    // pre-push guard as pii.phone.e164 on every push, and a guard that cries wolf
+    // gets ignored. auth.ts only interpolates this into the verify request body.
+    vi.stubEnv("LINE_CHANNEL_ID", "test-channel-id")
   })
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals() })
 
