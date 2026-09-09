@@ -17,6 +17,39 @@ export const WINDOW_END_CAL_DAYS = 33
 /** A benchmark base bar lagging the signal date by more than this is a cache gap, not a holiday. */
 export const BENCHMARK_BASE_MAX_LAG_DAYS = 5
 
+/**
+ * The outcome cron ignores rows younger than this, so nothing is expected to
+ * carry a value before it — even a window that closed days earlier.
+ * Lives here, beside the horizons it is reasoned about with, so the report and
+ * the cron cannot drift apart on it.
+ */
+export const ELIGIBLE_AGE_DAYS = 10
+/** Past this age a missing window is accepted as permanently missing, not a fault. */
+export const STALE_AGE_DAYS = 120
+
+/**
+ * Slack between a horizon's nominal close and the first bar that can actually
+ * fill it. Derived, not chosen: WINDOW_END_CAL_DAYS already exists because the
+ * +28d target may need the +33d bar when it lands on a weekend or holiday.
+ */
+export const FILL_SLACK_CAL_DAYS = WINDOW_END_CAL_DAYS - WINDOW_CAL_DAYS.d20
+
+/**
+ * Age at which a still-null horizon is a genuine pipeline fault.
+ *
+ * WHY NOT THE NOMINAL WINDOW. Coverage used `age > 28` for the 20d horizon —
+ * the nominal close. But the value is the first close ON OR AFTER +28d, and
+ * WINDOW_END_CAL_DAYS says that bar can be as late as +33d. A row aged 29–33
+ * days was therefore reported as "matured but empty" when it simply had no bar
+ * yet. That gate has now cried wolf twice (2026-09-02, 2026-09-08) and on the
+ * first occasion the false alarm was waved through as "data availability",
+ * masking a real defect underneath. A conservative line costs a few days of
+ * detection latency and buys a warning that means something.
+ */
+export function coverageMatureDays(horizon: keyof typeof WINDOW_CAL_DAYS): number {
+  return Math.max(WINDOW_CAL_DAYS[horizon] + FILL_SLACK_CAL_DAYS, ELIGIBLE_AGE_DAYS + 1)
+}
+
 export function addDays(d: Date, days: number): Date {
   return new Date(d.getTime() + days * 86_400_000)
 }

@@ -24,10 +24,12 @@ import { getAdapter } from "../src/adapters/index.js"
 import { bulkInsertOHLCV } from "../src/cache.js"
 import { getMarket, marketIndexSymbol } from "../src/utils/strong-death.js"
 import type { MarketBucket } from "../src/utils/strong-death.js"
-import { addDays, benchmarkBase, windowReturns, WINDOW_END_CAL_DAYS } from "../src/utils/outcome-math.js"
+import { addDays, benchmarkBase, windowReturns, WINDOW_END_CAL_DAYS,
+         ELIGIBLE_AGE_DAYS, STALE_AGE_DAYS } from "../src/utils/outcome-math.js"
 
-const ELIGIBLE_AGE_DAYS = 10   // ensures the +5-trading-day (≈7 cal) window has matured
-const STALE_AGE_DAYS    = 120  // beyond this, missing windows are accepted as permanently missing
+// ELIGIBLE_AGE_DAYS / STALE_AGE_DAYS now live in outcome-math.ts, so the
+// coverage report in scripts/ae-report.ts reasons about the same numbers this
+// cron enforces rather than a second copy of them.
 
 /** Buckets whose index series this cron is responsible for keeping current. */
 const BENCHMARK_BUCKETS: MarketBucket[] = ["tw", "us", "crypto"]
