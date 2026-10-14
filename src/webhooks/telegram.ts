@@ -31,6 +31,7 @@ import { chatWithContext, hasAnyProviderKey } from "../services/ai.js"
 import { getUserContext }  from "../services/bot-context.js"
 import { clampMessage, TELEGRAM_TEXT_LIMIT } from "../utils/message.js"
 import { timingSafeEqual } from "crypto"
+import { watchlistIsFull, MAX_WATCHLIST_PER_USER } from "../utils/watchlist-cap.js"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -133,6 +134,11 @@ async function handleWatch(chatId: number, rawSymbol: string) {
   })
   if (existing) {
     await sendMessage(chatId, `「${normalizedSymbol}」已在你的自選清單中。`)
+    return
+  }
+
+  if (await watchlistIsFull(userId, "telegram")) {
+    await sendMessage(chatId, `自選清單已達上限 ${MAX_WATCHLIST_PER_USER} 檔，請先用 /移除 移掉不需要的標的。`)
     return
   }
 
