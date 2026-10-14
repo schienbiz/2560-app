@@ -19,18 +19,47 @@ jobs:
           sudo apt-get update -y -q
           sudo apt-get install -y postgresql-client-17
 
-      - name: Backup to artifact
+      # ENCRYPTED, NEVER PLAINTEXT. This repo is public by design (see memory /
+      # README: cross-account Render deploys), and a public repo's Actions
+      # artifacts can be downloaded by ANY signed-in GitHub user. Until
+      # 2026-10-14 this step uploaded a plaintext pg_dump of the whole Neon
+      # database — which is shared with self-journal and warehouse-scanner —
+      # every night with 90-day retention (verified: a non-collaborator account
+      # got a 302 signed download URL).
+      #
+      # The dump streams pg_dump → gzip → gpg, so plaintext never touches disk.
+      # A missing passphrase is a hard failure, never a fallback to plaintext.
+      #
+      # Restore:  gpg --decrypt backup-YYYYMMDD.sql.gz.gpg | gunzip | psql "$DIRECT_URL"
+      - name: Backup to encrypted artifact
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
         run: |
-          set -eo pipefail
-          BACKUP_FILE="backup-$(date +%Y%m%d).sql.gz"
-          /usr/lib/postgresql/17/bin/pg_dump "${{ secrets.DIRECT_URL }}" | gzip > "$BACKUP_FILE"
-          [ -s "$BACKUP_FILE" ] || { echo "Backup file is empty — pg_dump likely failed"; exit 1; }
+          set -euo pipefail
+          if [ -z "${BACKUP_PASSPHRASE}" ]; then
+            echo "::error::BACKUP_PASSPHRASE is not set — refusing to upload a plaintext database dump from a public repo"
+            exit 1
+          fi
+          OUT="backup-$(date +%Y%m%d).sql.gz.gpg"
+          /usr/lib/postgresql/17/bin/pg_dump "$DIRECT_URL" | gzip \
+            | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 \
+                  --symmetric --cipher-algo AES256 -o "$OUT" 3<<<"$BACKUP_PASSPHRASE"
+          [ -s "$OUT" ] || { echo "::error::encrypted backup is empty — pg_dump likely failed"; exit 1; }
+
+          # A backup nobody has restored is a hope, not a backup: decrypt it
+          # here and require pg_dump's own completion footer.
+          gpg --batch --quiet --pinentry-mode loopback --passphrase-fd 3 --decrypt "$OUT" 3<<<"$BACKUP_PASSPHRASE" \
+            | gunzip | tail -c 512 | grep -q "PostgreSQL database dump complete" \
+            || { echo "::error::encrypted backup does not decrypt to a complete dump"; exit 1; }
+          echo "✅ $OUT $(stat -c %s "$OUT") bytes, decrypt + footer verified"
 
       - name: Upload backup artifact
         uses: actions/upload-artifact@v4
         with:
           name: db-backup-${{ github.run_id }}
-          path: "*.sql.gz"
+          path: "*.sql.gz.gpg"
+          if-no-files-found: error
           retention-days: 90
 
       # 靜默失敗 = 沒有備份卻以為有（最經典的災難前置條件）。
@@ -39,4 +68,4 @@ jobs:
         run: |
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.HEALTH_CHECK_BOT_TOKEN }}/sendMessage" \
             -d chat_id="${{ secrets.HEALTH_CHECK_CHAT_ID }}" \
-            -d text="🔴 2560 DB backup 失敗 — 今日無資料庫備份！查 Actions log（pg_dump / DIRECT_URL / artifact）。" > /dev/null || true
+            -d text="🔴 2560 DB backup 失敗 — 今日無資料庫備份！查 Actions log（BACKUP_PASSPHRASE / pg_dump / DIRECT_URL / 解密驗證 / artifact）。" > /dev/null || true
