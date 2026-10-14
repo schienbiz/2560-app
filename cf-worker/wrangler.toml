@@ -10,3 +10,6 @@ compatibility_date = "2026-06-19"
 
 [vars]
 BACKEND = "https://two560-app-2.onrender.com"
+# Automatic failover target — used only when BACKEND is suspended by Render, or
+# unreachable for a GET/HEAD. See worker.js. Both backends share one Neon DB.
+BACKEND_STANDBY = "https://two560-app.onrender.com"
