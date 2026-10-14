@@ -100,7 +100,7 @@ app.post("/internal/morning-summary", async c => {
   }
   const { runMorningSummary } = await import("../cron/morning-summary.js")
   const result = await runMorningSummary()
-  return c.json({ ok: result.failed === 0, ...result })
+  return c.json({ ok: result.failed === 0 && (result.unreadable ?? 0) === 0, ...result })
 })
 
 app.post("/internal/outcome", async c => {

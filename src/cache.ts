@@ -128,6 +128,19 @@ export function isBarTooOld(latestBarDate: Date, maxAgeDays: number, now: number
  * describe, which this answers — and the caller still prints 「資料至 {date}」
  * so the reader sees exactly which close the advice is based on.
  */
+/**
+ * Why getCachedOHLCVByBarAge said null: a short but live series (a new listing
+ * — the scan's insufficient-data case) versus no recent bars at all, which is a
+ * data fault a digest must not narrate as a quiet market.
+ */
+export async function whyNoCachedSeries(
+  symbol: string,
+  maxBarAgeDays: number = DIGEST_MAX_BAR_AGE_DAYS
+): Promise<"thin-history" | "stale-or-missing"> {
+  const newest = await db.ohlcvCache.findFirst({ where: { symbol }, orderBy: { date: "desc" }, select: { date: true } })
+  return newest && !isBarTooOld(newest.date, maxBarAgeDays) ? "thin-history" : "stale-or-missing"
+}
+
 export async function getCachedOHLCVByBarAge(
   symbol: string,
   assetType: AssetType,
