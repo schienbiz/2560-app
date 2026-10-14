@@ -27,6 +27,8 @@ import type { OHLCV, AssetType } from "../src/engine/types.js"
 import type { Prisma } from "@prisma/client"
 
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
+/** Bars searched for a cross: the newest, plus one a previous run may have missed. */
+export const CROSS_LOOKBACK = 2
 const APP_URL        = process.env.APP_URL ?? "https://two560-app.onrender.com"
 
 type Market = MarketBucket
@@ -214,9 +216,19 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
       const maFastLast = maFast[maFast.length - 1] as number
       const maSlowLast = maSlow[maSlow.length - 1] as number
 
-      // scoreSignal with lookback=1: only fire if cross happened at the last bar
-      const { signal, confidence, rsi, macdHist } = scoreSignal(ohlcv, maFast, maSlow, 1)
-      const latest = ohlcv[ohlcv.length - 1]
+      // Look back CROSS_LOOKBACK bars, not one. With lookback=1 a cross is only
+      // seen on the one run where it is the newest bar; any run that misses that
+      // bar loses the cross for good. Measured 2026-10-14: scan-us runs that
+      // GitHub started after 00:00 UTC were handed the PREVIOUS session as the
+      // newest bar in 10 of 21 cases (0 of 28 before midnight), and three
+      // subscribed death crosses were never sent — SMR 10-02 and RDW 10-09 that
+      // way, 2330.TW 09-04 to a timed-out scan. The claim is keyed on the CROSS
+      // bar's date, so a cross already sent is never sent twice; one that was
+      // missed goes out on the next run, one session late and labelled as such.
+      const { signal, confidence, rsi, macdHist, crossIndex } = scoreSignal(ohlcv, maFast, maSlow, CROSS_LOOKBACK)
+      const latest   = ohlcv[ohlcv.length - 1]
+      const crossBar = crossIndex != null ? ohlcv[crossIndex] : latest
+      const crossIsLate = crossIndex != null && crossIndex < ohlcv.length - 1
 
       const chartData: ChartData = {
         symbol:      normalizedSymbol,
@@ -226,7 +238,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
         ma60:        maSlow,
         signal,
         confidence,
-        signal_date: latest.date,
+        signal_date: crossBar.date,
         support:     [],
         resistance:  [],
         rsi,
@@ -244,7 +256,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
           // write race the old check depended on to work at all.
           const key = {
             userId: watchlist.user_id, platform: watchlist.platform,
-            symbol: normalizedSymbol, signalDate: new Date(latest.date), signal,
+            symbol: normalizedSymbol, signalDate: new Date(crossBar.date), signal,
           }
           const claimed = await claimNotification(key)
 
@@ -266,7 +278,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
               const [insight, strongDeath] = await Promise.all([
                 notifyInsight(chartData, signal, fastPeriod, slowPeriod, sentiment),
                 signal === "death_cross"
-                  ? evaluateStrongDeath(normalizedSymbol, assetType, slowPeriod, getMarket(assetType, normalizedSymbol), latest.date)
+                  ? evaluateStrongDeath(normalizedSymbol, assetType, slowPeriod, getMarket(assetType, normalizedSymbol), crossBar.date)
                   : Promise.resolve(null),
               ])
               // 83% precision claim only for the backtested MA25/60 configuration
@@ -286,6 +298,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
 
               const msg = [
                 `${emoji} ${watchlist.label ?? watchlist.symbol} ${crossLabel}${confLabel}`,
+                crossIsLate ? `⏱ 交叉發生於 ${crossBar.date} 收盤（前次掃描未取得該日資料，補送）` : null,
                 strongLine,
                 `MA${fastPeriod} ${maFastLast.toFixed(2)} ${arrow} MA${slowPeriod} ${maSlowLast.toFixed(2)} · 收盤 ${fmtPrice(latest.close)}`,
                 indLine,
@@ -301,10 +314,13 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                 symbol:      normalizedSymbol,
                 asset_type:  assetType,
                 signal,
-                signal_date: new Date(latest.date),
-                close_price: latest.close,
-                ma25:        maFastLast,
-                ma60:        maSlowLast,
+                // The cross bar's own date, close and MAs: outcomes are measured
+                // forward from signal_date, so a late-detected cross must not be
+                // recorded as if it happened on the bar it was noticed on.
+                signal_date: new Date(crossBar.date),
+                close_price: crossBar.close,
+                ma25:        maFast[crossIndex!] as number,
+                ma60:        maSlow[crossIndex!] as number,
                 confidence,
                 // Persisted at signal time so live precision per confirmation
                 // tier can later be measured against the backtest claim.

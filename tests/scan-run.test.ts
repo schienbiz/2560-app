@@ -171,6 +171,43 @@ describe("runScan", () => {
     expect(historyRows.size).toBe(1)
   })
 
+  it("a cross the previous run missed goes out on the next one — late, labelled, keyed on the cross bar", async () => {
+    // Yesterday's scan was handed a stale series and never saw the cross bar;
+    // today the cross is second-newest. With lookback=1 it was lost for good
+    // (SMR 10-02, RDW 10-09). One more flat bar at 130 keeps MA5 > MA10, so the
+    // ONLY cross in the window is on the previous bar.
+    const series = crossingSeries()
+    const crossDay = series[series.length - 1].date
+    series.push({ ...series[series.length - 1], date: "2026-08-20" })
+    adapterFetch.mockResolvedValue(series)
+    findAlerts.mockResolvedValue([alertFor("u1", "telegram")])
+
+    const r = await runScan()
+
+    expect(r.notified).toBe(1)
+    expect(claim.mock.calls[0][0].signalDate.toISOString().slice(0, 10)).toBe(crossDay)
+    expect(pushTelegram.mock.calls[0][1]).toContain(`交叉發生於 ${crossDay}`)
+    expect([...historyRows][0]).toContain(crossDay)
+  })
+
+  it("a cross already sent is not sent again when it becomes the previous bar", async () => {
+    findAlerts.mockResolvedValue([alertFor("u1", "telegram")])
+    expect((await runScan()).notified).toBe(1)          // day of the cross
+
+    const next = crossingSeries()
+    next.push({ ...next[next.length - 1], date: "2026-08-20" })
+    adapterFetch.mockResolvedValue(next)
+    expect((await runScan()).notified).toBe(0)          // the day after
+
+    expect(pushTelegram).toHaveBeenCalledTimes(1)
+  })
+
+  it("a cross on the newest bar carries no late label", async () => {
+    findAlerts.mockResolvedValue([alertFor("u1", "telegram")])
+    await runScan()
+    expect(pushTelegram.mock.calls[0][1]).not.toContain("補送")
+  })
+
   it("three people watching one symbol: all told, ONE history row, run stays green", async () => {
     // Production shape: BTCUSDT and 2330.TW each have three watchers. Every
     // alert writes the same (symbol, date, signal) row concurrently.
