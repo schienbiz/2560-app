@@ -9,3 +9,5 @@ dist/
 *.js.map
 .gstack/
 richmenu*.png
+# Claude Code worktrees: full repo copies — never commit, never test from here.
+.claude/worktrees/
