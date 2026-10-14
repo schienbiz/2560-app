@@ -1,8 +1,9 @@
 /**
  * Shared AI service — multi-model provider chain.
  *
- * Sequential fallback (chat):    Groq → Cerebras → NVIDIA → OpenRouter(Kimi K2)
- * Parallel gather (multiChat):   + DeepSeek-R1 (reasoning, :free via OpenRouter)
+ * Sequential fallback (chat):    Groq gpt-oss → Groq Qwen3 → NVIDIA Nemotron → OpenRouter Gemma
+ * Parallel gather (multiChat):   the same four, one answer per distinct model
+ * (The registry in getProviders() is the source of truth; this line is a summary.)
  *
  * Set any combination in .env; at least one key must be present.
  * Each provider is tried in order; the first successful response wins.
@@ -203,7 +204,7 @@ export function hasAnyProviderKey(): boolean {
   return getProviders().length > 0
 }
 
-// ─── Chat: NVIDIA → Groq → OpenRouter sequential fallback ────────────────────
+// ─── Chat: sequential fallback in getProviders() order ───────────────────────
 // Used for latency-sensitive calls (push notifications, sentiment scoring).
 
 export async function chat(userMsg: string): Promise<string> {
