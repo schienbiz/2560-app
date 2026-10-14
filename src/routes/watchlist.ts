@@ -5,6 +5,7 @@ import { db } from "../db.js"
 import { authMiddleware } from "../auth.js"
 import { getAdapter } from "../adapters/index.js"
 import { resolveSymbol } from "../utils/symbol.js"
+import { watchlistIsFull, MAX_WATCHLIST_PER_USER } from "../utils/watchlist-cap.js"
 
 export const watchlistRouter = new Hono()
 watchlistRouter.use("*", authMiddleware)
@@ -64,6 +65,10 @@ watchlistRouter.post("/", zValidator("json", addSchema), async c => {
     where: { user_id: userId, platform, symbol: normalizedSymbol },
   })
   if (existing) return c.json({ error: "Already in watchlist" }, 409)
+
+  if (await watchlistIsFull(userId, platform)) {
+    return c.json({ error: `自選清單已達上限 ${MAX_WATCHLIST_PER_USER} 檔` }, 422)
+  }
 
   const item = await db.watchlist.create({
     data: {
