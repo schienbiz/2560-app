@@ -21,11 +21,21 @@ import { getMarket } from "../utils/strong-death.js"
 // key, NVIDIA's llama-3.3-70b 410 (EOL 2026-08-26), and BOTH OpenRouter models —
 // kimi-k2.6:free and deepseek-r1:free — 404 with "unavailable for free".
 //
+//
+// Re-checked 2026-10-14: NVIDIA's openai/gpt-oss-120b went 410 (EOL 2026-09-03,
+// the day after the list above was fixed) and minimax-m3:free went 404, leaving
+// both Groq models as the only working voices — one key, one outage away from
+// no AI at all. Measured replacements at the real 15s budget, 3–8 calls each:
+// nemotron-3-super with thinking off 3/3 at ~2s in Traditional Chinese;
+// glm-5.3-flash 0/11 (empty or timeout, thinking on or off); deepseek-v4.1-flash
+// 37–59s; kimi-k2.6 and mistral-large are listed by /v1/models but 404.
+//
 // `params` is per MODEL, not per provider: qwen3.x needs reasoning_effort 'none'
 // or it returns its <think> block as the answer, while gpt-oss rejects 'none'
-// with a 400 and wants low|medium|high.
+// with a 400 and wants low|medium|high. Nemotron spends a 500-token budget on
+// thinking and returns empty content unless thinking is switched off.
 const NVIDIA_URL   = "https://integrate.api.nvidia.com/v1/chat/completions"
-const NVIDIA_MODEL = "openai/gpt-oss-120b"
+const NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 const GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
 const GROQ_MODEL     = "openai/gpt-oss-120b"
@@ -36,11 +46,13 @@ const GROQ_QWEN_MODEL = "qwen/qwen3.8-27b"
 const OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
 const OPENROUTER_MODEL = "google/gemma-4-31b-it:free"
 
-// Second free OpenRouter voice for the parallel gather, replacing deepseek-r1:free.
-const OPENROUTER_ALT_MODEL = "minimax/minimax-m3:free"
+// No second OpenRouter gather voice: minimax-m3:free is gone, the free
+// nemotron-3-super is the same model as the NVIDIA entry (multiChat would
+// de-duplicate it away), and both gemma-4 sizes answered 429 on every call.
 
 const REASONING_LOW  = { reasoning_effort: "low" } as const
 const REASONING_NONE = { reasoning_effort: "none" } as const
+const THINKING_OFF   = { chat_template_kwargs: { enable_thinking: false } } as const
 
 const SYSTEM = `你是 2560戰法的交易助理。2560戰法是一套以 MA25（25日均線）和 MA60（60日均線）交叉為核心的趨勢策略：
 - 黃金交叉（MA25 由下往上穿越 MA60）= 買入訊號
@@ -106,6 +118,10 @@ async function callProvider(
   if (!res.ok) {
     if (res.status === 429) circuitTrip(label)
     if (res.status === 402) circuitTrip(label, 24 * 60 * 60 * 1000)
+    // 404/410 = the model id is gone (NVIDIA's EOL answers 410, OpenRouter's
+    // "no longer free" 404). Retrying it is a wasted round-trip on every call
+    // in front of the providers that work; a restart re-checks it.
+    if (res.status === 404 || res.status === 410) circuitTrip(label, 24 * 60 * 60 * 1000)
     const err = await res.text()
     throw new Error(`[${label}] error ${res.status}: ${err.slice(0, 120)}`)
   }
@@ -155,24 +171,11 @@ function getProviders(): Provider[] {
     {
       label: "NVIDIA", url: NVIDIA_URL, model: NVIDIA_MODEL,
       key: () => process.env.NVIDIA_API_KEY,
-      params: REASONING_LOW,
+      params: THINKING_OFF,
     },
     {
       label: "OpenRouter", url: OPENROUTER_URL, model: OPENROUTER_MODEL,
       key: () => process.env.OPENROUTER_API_KEY,
-      extraHeaders: {
-        "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
-        // ASCII only. HTTP header values are ByteStrings, so "2560戰法" made
-        // fetch() throw before a request was ever sent — meaning OpenRouter has
-        // never once succeeded since it was added in 1d13c38, and neither has the
-        // DeepSeek gather entry from 56b4347. Both looked like provider outages.
-        "X-Title":      "2560",
-      },
-    },
-    {
-      label: "MiniMax", url: OPENROUTER_URL, model: OPENROUTER_ALT_MODEL,
-      key: () => process.env.OPENROUTER_API_KEY,
-      gatherOnly: true,
       extraHeaders: {
         "HTTP-Referer": process.env.APP_URL ?? "https://two560-app.onrender.com",
         // ASCII only. HTTP header values are ByteStrings, so "2560戰法" made
