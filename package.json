@@ -1,6 +1,6 @@
 {
   "name": "2560-app",
-  "version": "1.7.8",
+  "version": "1.7.9",
   "type": "module",
   "scripts": {
     "dev": "tsx watch server.ts",
@@ -26,5 +26,8 @@
     "prisma": "^6.4.1",
     "typescript": "^5.8.2",
     "vitest": "^2.1.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.2"
   }
 }
