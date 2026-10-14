@@ -10,7 +10,7 @@
 import { db } from "../src/db.js"
 import { getAdapter } from "../src/adapters/index.js"
 import { computeMA, scoreSignal, hasSufficientBars } from "../src/engine/index.js"
-import { getCachedOHLCVByBarAge } from "../src/cache.js"
+import { getCachedOHLCVByBarAge, whyNoCachedSeries, DIGEST_MAX_BAR_AGE_DAYS } from "../src/cache.js"
 import { fetchDaysFor } from "../src/utils/ohlcv.js"
 import { morningInsight, hasAnyProviderKey, type SignalHistoryEntry } from "../src/services/ai.js"
 import { deliver, maskRecipient } from "./notify.js"
@@ -69,6 +69,9 @@ export async function runMorningSummary() {
   // Counted and returned, not just logged: the /internal endpoint reports it so
   // the GitHub workflow can fail on a run where every push was rejected.
   let failedPushes = 0
+  // Symbols that could not be read at all (no cached series, or an error) —
+  // reported so the workflow goes red instead of narrating them as calm.
+  let unreadable = 0
   // Recipients switched off this run because they can never receive again.
   // Reported but deliberately NOT a failure — see cron/notify.ts::deliver.
   const deactivated: string[] = []
@@ -90,7 +93,17 @@ export async function runMorningSummary() {
       // (00:00 UTC is a Render cold start), and the fetch-age rule made crypto
       // permanently invisible here — see getCachedOHLCVByBarAge.
       const ohlcv = await getCachedOHLCVByBarAge(normalizedSymbol, watchlist.asset_type, cacheDays)
-      if (!ohlcv || !hasSufficientBars(ohlcv.length, slowPeriod)) return null
+      // No usable series is NOT "no signal" — it is "could not look", unless
+      // the series is merely short (a new listing, which the scan also skips
+      // without failing). Throwing routes it to the unreadable count below
+      // instead of the calm message.
+      if (!ohlcv) {
+        if (await whyNoCachedSeries(normalizedSymbol) === "thin-history") return null
+        throw new Error(`no cached bars within ${DIGEST_MAX_BAR_AGE_DAYS} days for ${normalizedSymbol}`)
+      }
+      // Too little history for this MA pair (a new listing) is a genuine,
+      // known "cannot signal yet" — the scan skips it the same way.
+      if (!hasSufficientBars(ohlcv.length, slowPeriod)) return null
 
       const closes = ohlcv.map(b => b.close)
       const maFast = computeMA(closes, fastPeriod)
@@ -134,9 +147,22 @@ export async function runMorningSummary() {
       .map(r => (r.status === "fulfilled" ? r.value : null))
       .filter((v): v is string => v !== null)
 
+    // A rejected symbol used to vanish into the filter above, so a user whose
+    // every symbol failed to load was told 「今天自選股全部平靜」 — a broken
+    // read and a quiet market produced the identical message. Calm is now only
+    // said when every symbol was actually read.
+    const unreadableHere = results.filter(r => r.status === "rejected")
+    for (const r of unreadableHere) console.error(`  ✗ morning summary symbol unreadable for ${maskRecipient(user_id)}:`, (r as PromiseRejectedResult).reason)
+    unreadable += unreadableHere.length
+    const unreadableNote = unreadableHere.length > 0
+      ? `⚠️ 另有 ${unreadableHere.length} 檔資料讀取失敗，今天無法確認其訊號狀態。`
+      : null
+
     const msg = lines.length > 0
-      ? `🌅 2560戰法 早安摘要\n\n${lines.join("\n\n")}`
-      : "🌅 今天自選股全部平靜，沒有活躍的黃金交叉或死亡交叉訊號。"
+      ? [`🌅 2560戰法 早安摘要\n\n${lines.join("\n\n")}`, unreadableNote].filter(Boolean).join("\n\n")
+      : unreadableHere.length > 0
+        ? `🌅 早安摘要：${unreadableHere.length} 檔資料讀取失敗，今天無法確認訊號狀態（其餘自選股無活躍交叉）。`
+        : "🌅 今天自選股全部平靜，沒有活躍的黃金交叉或死亡交叉訊號。"
 
     try {
       const outcome = await deliver(platform, user_id, msg)
@@ -159,5 +185,5 @@ export async function runMorningSummary() {
   console.log(`Morning summary complete. Sent to ${totalUsers} users, ${totalSymbolsSent} symbols total, ` +
               `${failedPushes} transient failures` +
               (deactivated.length ? `, deactivated ${deactivated.join(", ")}` : "") + ".")
-  return { users: totalUsers, symbols: totalSymbolsSent, failed: failedPushes, deactivated }
+  return { users: totalUsers, symbols: totalSymbolsSent, failed: failedPushes, unreadable, deactivated }
 }
