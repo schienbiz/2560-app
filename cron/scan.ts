@@ -24,6 +24,7 @@ import type { SentimentResult } from "../src/services/news.js"
 import { deliver, maskRecipient } from "./notify.js"
 import type { ChartData } from "../src/engine/types.js"
 import type { OHLCV, AssetType } from "../src/engine/types.js"
+import type { Prisma } from "@prisma/client"
 
 const EXIT_THRESHOLD = 0.03    // 3% — zone is "closed"
 const APP_URL        = process.env.APP_URL ?? "https://two560-app.onrender.com"
@@ -33,6 +34,24 @@ type Market = MarketBucket
 // getMarket moved to src/utils/strong-death.ts (cron/outcome.ts needs it for
 // benchmark routing); re-exported here so existing imports keep working.
 export { getMarket }
+
+/**
+ * Record one (symbol, date, signal) row — first writer wins, atomically.
+ *
+ * This was `upsert({ ..., update: {} })`, which Prisma runs as SELECT-then-
+ * INSERT. Every alert runs concurrently, so when two people watch the same
+ * symbol both SELECTs miss and the second INSERT hits the unique constraint.
+ * Production log, 2026-10-14 scan-crypto: BTCUSDT proximity sent to all three
+ * watchers, then `P2002 Unique constraint failed on (symbol, signal_date,
+ * signal)` for one of them — run red, Telegram "backend may be down" alert,
+ * and the sent claim released so a re-run would push it twice. It fired on 13
+ * symbol-days from 2026-09-11 on, roughly every other day with a shared signal.
+ * `skipDuplicates` is INSERT … ON CONFLICT DO NOTHING: same first-writer-wins
+ * result as `update: {}`, decided by Postgres instead of by timing.
+ */
+async function recordSignal(row: Prisma.SignalHistoryCreateManyInput): Promise<void> {
+  await db.signalHistory.createMany({ data: [row], skipDuplicates: true })
+}
 
 // Smart MACD formatter: large values (BTC) get 0-2 decimals, small (alt) get 4-6
 function fmtMacd(v: number): string {
@@ -230,6 +249,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
           const claimed = await claimNotification(key)
 
           if (claimed) {
+            let sent = false
             try {
               const crossLabel = signal === "golden_cross" ? "黃金交叉" : "死亡交叉"
               const emoji      = signal === "golden_cross" ? "🟢" : "🔴"
@@ -274,33 +294,31 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                 insight,
               ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
-              if (await deliver(watchlist.platform, watchlist.user_id, msg) === "sent") notified++
+              if (await deliver(watchlist.platform, watchlist.user_id, msg) === "sent") { sent = true; notified++ }
               else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(key) }
 
-              await db.signalHistory.upsert({
-                where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal } },
-                create: {
-                  symbol:      normalizedSymbol,
-                  asset_type:  assetType,
-                  signal,
-                  signal_date: new Date(latest.date),
-                  close_price: latest.close,
-                  ma25:        maFastLast,
-                  ma60:        maSlowLast,
-                  confidence,
-                  // Persisted at signal time so live precision per confirmation
-                  // tier can later be measured against the backtest claim.
-                  strong_passed:     strongDeath?.passed,
-                  strong_applicable: strongDeath?.applicable,
-                },
-                update: {},
+              await recordSignal({
+                symbol:      normalizedSymbol,
+                asset_type:  assetType,
+                signal,
+                signal_date: new Date(latest.date),
+                close_price: latest.close,
+                ma25:        maFastLast,
+                ma60:        maSlowLast,
+                confidence,
+                // Persisted at signal time so live precision per confirmation
+                // tier can later be measured against the backtest claim.
+                strong_passed:     strongDeath?.passed,
+                strong_applicable: strongDeath?.applicable,
               })
 
               console.log(`  ✓ ${normalizedSymbol} → ${signal}${strongDeath ? ` (死叉確認 ${strongDeath.passed}/${FACTOR_COUNT}${strongDeath.isStrong ? " ⚡強確認" : ""})` : ""}`)
             } catch (err) {
               // Hand the claim back so a re-run can retry rather than the
-              // notification being lost to a transient push failure.
-              await releaseNotification(key)
+              // notification being lost to a transient push failure — but only
+              // if it was NOT delivered. Once the user has the message, the
+              // claim is the only thing stopping a re-run from sending it again.
+              if (!sent) await releaseNotification(key)
               throw err
             }
           }
@@ -327,6 +345,7 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
             }
 
             if (await claimNotification(proxKey)) {
+              let sent = false
               try {
                 const entryLow  = (maFastLast * 0.99).toLocaleString(undefined, { maximumFractionDigits: 2 })
                 const entryHigh = (maFastLast * 1.01).toLocaleString(undefined, { maximumFractionDigits: 2 })
@@ -345,27 +364,23 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
                   insight,
                 ].filter(Boolean).join("\n") + deepLink(normalizedSymbol)
 
-                if (await deliver(watchlist.platform, watchlist.user_id, proximityMsg) === "sent") notified++
+                if (await deliver(watchlist.platform, watchlist.user_id, proximityMsg) === "sent") { sent = true; notified++ }
                 else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(proxKey) }
 
-                await db.signalHistory.upsert({
-                  where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_golden" } },
-                  create: {
-                    symbol:      normalizedSymbol,
-                    asset_type:  assetType,
-                    signal:      "proximity_golden",
-                    signal_date: new Date(latest.date),
-                    close_price: latest.close,
-                    ma25:        maFastLast,
-                    ma60:        maSlowLast,
-                    confidence,
-                  },
-                  update: {},
+                await recordSignal({
+                  symbol:      normalizedSymbol,
+                  asset_type:  assetType,
+                  signal:      "proximity_golden",
+                  signal_date: new Date(latest.date),
+                  close_price: latest.close,
+                  ma25:        maFastLast,
+                  ma60:        maSlowLast,
+                  confidence,
                 })
 
                 console.log(`  ✓ ${normalizedSymbol} → proximity_golden`)
               } catch (err) {
-                await releaseNotification(proxKey)
+                if (!sent) await releaseNotification(proxKey)
                 throw err
               }
             }
@@ -395,30 +410,27 @@ export async function runScan(markets?: Market[]): Promise<ScanRunResult> {
               }
 
               if (await claimNotification(exitKey)) {
+                let sent = false
                 try {
                   const exitMsg = `🔔 ${watchlist.label ?? watchlist.symbol} 已離開進場區\n收盤 ${fmtPrice(latest.close)}，距 MA${fastPeriod} ${(priceDist * 100).toFixed(2)}%，進場窗口已關閉。` + deepLink(normalizedSymbol)
 
-                  if (await deliver(watchlist.platform, watchlist.user_id, exitMsg) === "sent") notified++
+                  if (await deliver(watchlist.platform, watchlist.user_id, exitMsg) === "sent") { sent = true; notified++ }
                   else { deactivated.add(`${watchlist.platform}:${maskRecipient(watchlist.user_id)}`); await releaseNotification(exitKey) }
 
-                  await db.signalHistory.upsert({
-                    where: { symbol_signal_date_signal: { symbol: normalizedSymbol, signal_date: new Date(latest.date), signal: "proximity_exit" } },
-                    create: {
-                      symbol:      normalizedSymbol,
-                      asset_type:  assetType,
-                      signal:      "proximity_exit",
-                      signal_date: new Date(latest.date),
-                      close_price: latest.close,
-                      ma25:        maFastLast,
-                      ma60:        maSlowLast,
-                      confidence,
-                    },
-                    update: {},
+                  await recordSignal({
+                    symbol:      normalizedSymbol,
+                    asset_type:  assetType,
+                    signal:      "proximity_exit",
+                    signal_date: new Date(latest.date),
+                    close_price: latest.close,
+                    ma25:        maFastLast,
+                    ma60:        maSlowLast,
+                    confidence,
                   })
 
                   console.log(`  ✓ ${normalizedSymbol} → proximity_exit`)
                 } catch (err) {
-                  await releaseNotification(exitKey)
+                  if (!sent) await releaseNotification(exitKey)
                   throw err
                 }
               }

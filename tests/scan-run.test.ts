@@ -15,8 +15,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 
 const findAlerts    = vi.fn()
-const historyUpsert = vi.fn()
+/** Called with every SignalHistory row written; reject it to inject a DB fault. */
+const historyWrite  = vi.fn()
 const historyFirst  = vi.fn()
+/**
+ * The (symbol, signal_date, signal) unique constraint, enforced for real.
+ *
+ * The first version of this file mocked `upsert` as an always-resolving no-op,
+ * so the suite stayed green through a P2002 race that turned production runs
+ * red on 13 symbol-days — the same tautology the claim ledger below was built
+ * to avoid, left in place for the table right next to it.
+ */
+const historyRows   = new Set<string>()
+const rowKey = (d: { symbol: string; signal_date: Date; signal: string }) =>
+  `${d.symbol}|${d.signal_date.toISOString()}|${d.signal}`
+const uniqueViolation = () =>
+  Object.assign(new Error("Unique constraint failed on the fields: (`symbol`,`signal_date`,`signal`)"), { code: "P2002" })
 const pushLine      = vi.fn()
 const pushTelegram  = vi.fn()
 const adapterFetch  = vi.fn()
@@ -29,7 +43,30 @@ vi.mock("../src/db.js", () => ({
   db: {
     watchlistAlert: { findMany: (...a: unknown[]) => findAlerts(...a) },
     signalHistory:  {
-      upsert:    (...a: unknown[]) => historyUpsert(...a),
+      // Prisma runs this upsert as SELECT then INSERT. The yield between them is
+      // where concurrent alerts interleave in production, so it is modelled —
+      // which is what lets this suite catch the race if the scan goes back to it.
+      upsert: async ({ create }: { create: Parameters<typeof rowKey>[0] }) => {
+        await historyWrite(create)
+        const existed = historyRows.has(rowKey(create))
+        await new Promise(r => setTimeout(r, 0))
+        if (existed) return
+        if (historyRows.has(rowKey(create))) throw uniqueViolation()
+        historyRows.add(rowKey(create))
+      },
+      createMany: async ({ data, skipDuplicates }: { data: Parameters<typeof rowKey>[0][]; skipDuplicates?: boolean }) => {
+        let count = 0
+        for (const d of data) {
+          await historyWrite(d)
+          if (historyRows.has(rowKey(d))) {
+            if (!skipDuplicates) throw uniqueViolation()
+            continue
+          }
+          historyRows.add(rowKey(d))
+          count++
+        }
+        return { count }
+      },
       findFirst: (...a: unknown[]) => historyFirst(...a),
     },
   },
@@ -112,7 +149,8 @@ describe("runScan", () => {
     vi.clearAllMocks()
     ledger = new Set()
     deactivateFor.clear()
-    historyUpsert.mockResolvedValue(undefined)
+    historyRows.clear()
+    historyWrite.mockResolvedValue(undefined)
     historyFirst.mockResolvedValue(null)
     pushLine.mockResolvedValue(undefined)
     pushTelegram.mockResolvedValue(undefined)
@@ -130,7 +168,43 @@ describe("runScan", () => {
     findAlerts.mockResolvedValue([alertFor("u1", "telegram")])
     const r = await runScan()
     expect(r.notified).toBe(1)
-    expect(historyUpsert).toHaveBeenCalled()
+    expect(historyRows.size).toBe(1)
+  })
+
+  it("three people watching one symbol: all told, ONE history row, run stays green", async () => {
+    // Production shape: BTCUSDT and 2330.TW each have three watchers. Every
+    // alert writes the same (symbol, date, signal) row concurrently.
+    findAlerts.mockResolvedValue([
+      alertFor("line-a", "line"),
+      alertFor("tg-a", "telegram"),
+      alertFor("tg-b", "telegram"),
+    ])
+
+    const r = await runScan()
+
+    expect(r.notified).toBe(3)
+    expect(r.alertFailed).toBe(0)
+    expect(historyRows.size).toBe(1)
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it("a failure AFTER delivery keeps the claim, so a re-run cannot push it twice", async () => {
+    // The push succeeded; recording it did not. Releasing the claim here (as the
+    // scan used to) means anyone re-running the red workflow re-sends.
+    historyWrite.mockRejectedValueOnce(new Error("Can't reach database server"))
+    findAlerts.mockResolvedValue([alertFor("u1", "telegram")])
+
+    const r = await runScan()
+
+    expect(r.notified).toBe(1)
+    expect(r.alertFailed).toBe(1)
+    expect(release).not.toHaveBeenCalled()
+    expect(ledger.size).toBe(1)
+
+    // The re-run someone makes after seeing the red run:
+    const again = await runScan()
+    expect(again.notified).toBe(0)
+    expect(pushTelegram).toHaveBeenCalledTimes(1)
   })
 
   it("notifies EVERY user watching the symbol, not just the first one processed", async () => {
