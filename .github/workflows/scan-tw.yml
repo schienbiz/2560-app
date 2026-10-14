@@ -30,7 +30,10 @@ jobs:
         id: scan
         run: |
           set -euo pipefail
-          body=$(curl -f --max-time 240 -X POST "${{ secrets.APP_URL }}/internal/scan?market=tw" \
+          # Retry on any transport error (timeout, Cloudflare 524 — 09-04 and
+          # 09-18). Safe since v1.7.8: a re-run cannot double-send (claims) or
+          # double-record (skipDuplicates), and the first attempt may still finish.
+          body=$(curl -f --max-time 240 --retry 2 --retry-all-errors --retry-delay 20 -X POST "${{ secrets.APP_URL }}/internal/scan?market=tw" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}")
           echo "$body" | jq .
           echo "body=$body" >> "$GITHUB_OUTPUT"

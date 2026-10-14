@@ -21,7 +21,10 @@ jobs:
       - name: Trigger US stock scan
         run: |
           set -euo pipefail
-          body=$(curl -f --max-time 240 -X POST "${{ secrets.APP_URL }}/internal/scan?market=us" \
+          # Retry on any transport error (timeout, Cloudflare 524). Safe since
+          # v1.7.8: a re-run cannot double-send (claims) or double-record
+          # (skipDuplicates), and the first attempt may still finish.
+          body=$(curl -f --max-time 240 --retry 2 --retry-all-errors --retry-delay 20 -X POST "${{ secrets.APP_URL }}/internal/scan?market=us" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}")
           echo "$body" | jq .
           if [ "$(echo "$body" | jq -r '.ok')" != "true" ]; then
