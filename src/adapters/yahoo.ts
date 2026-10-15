@@ -79,12 +79,21 @@ interface YahooQuoteArrays {
 export function normalizeYahooBars(
   timestamp: number[],
   quote: YahooQuoteArrays,
-  days: number
+  days: number,
+  meta?: YahooChartMeta,
 ): OHLCV[] {
   const bars: OHLCV[] = []
   for (let i = 0; i < timestamp.length; i++) {
     const close = quote.close[i]
-    if (close == null || close <= 0) continue   // no usable close → unusable bar
+    if (close == null || close <= 0) {
+      // Only the LAST bar may be recovered, and only when its session is provably
+      // over — see settledLastBarFromMeta. Any other close-less bar stays dropped.
+      if (i === timestamp.length - 1) {
+        const recovered = settledLastBarFromMeta(timestamp[i], quote.open[i], meta)
+        if (recovered) bars.push(recovered)
+      }
+      continue   // no usable close → unusable bar
+    }
     const pos = (v: number | null | undefined) => (v != null && v > 0 ? v : close)
     bars.push({
       date:   new Date(timestamp[i] * 1000).toISOString().slice(0, 10),
@@ -96,6 +105,68 @@ export function normalizeYahooBars(
     })
   }
   return bars.slice(-days)
+}
+
+/**
+ * Rebuild the last bar from `meta` when Yahoo reports its close as null AFTER the
+ * session has ended.
+ *
+ * WHY. Measured 2026-10-14→15 (92 samples, DIS/SMCI/SPY, ranges 6mo and 1y): the
+ * just-closed US session's bar carries its final close from ~20:00 UTC, then at
+ * 00:08, 00:18 and 00:28 UTC every series returned that bar with close = null,
+ * and from 00:38 the close was back. meta.regularMarketPrice held the final close
+ * (108.99 for DIS, regularMarketTime 20:03Z) the whole time. Dropping the bar —
+ * the old behaviour — handed scan-us the PREVIOUS session as newest: 10 of the 21
+ * scan-us runs GitHub started after 00:00 UTC did exactly that, and two subscribed
+ * death crosses (SMR 10-02, RDW 10-09) were never sent.
+ *
+ * WHEN IT FILLS — all must hold, otherwise null (the bar stays dropped):
+ *   - a positive regularMarketPrice with its regularMarketTime and the exchange's
+ *     gmtoffset;
+ *   - regularMarketTime falls on the SAME exchange-local date as the bar, so the
+ *     price is that session's — not yesterday's close sitting next to today's
+ *     pre-open placeholder bar, which is the one this must never fill;
+ *   - currentTradingPeriod has already rolled PAST the bar (its start is later):
+ *     Yahoo itself says the session is over, so the price is a settled close, not
+ *     a live tick. If Yahoo nulls the close before rolling, we decline and the
+ *     scan's 2-bar lookback catches the cross on the next run instead.
+ * The settled bars this produces are written permanently (bulkInsertOHLCV keeps
+ * settled days), which is why the conditions are conservative.
+ *
+ * Fields: close = regularMarketPrice; high/low = regularMarketDayHigh/Low when they
+ * bracket the close (they matched the bar exactly in the probe), else the close;
+ * open from the quote array if present (meta has none), else the close; volume =
+ * regularMarketVolume.
+ */
+export function settledLastBarFromMeta(
+  barTs: number,
+  rawOpen: number | null | undefined,
+  meta: YahooChartMeta | undefined,
+): OHLCV | null {
+  if (!meta) return null
+  const price = meta.regularMarketPrice
+  const rmt   = meta.regularMarketTime
+  const off   = meta.gmtoffset
+  const next  = meta.currentTradingPeriod?.regular?.start
+  if (typeof price !== "number" || !(price > 0)) return null
+  if (typeof rmt !== "number" || typeof off !== "number" || typeof next !== "number") return null
+
+  const exchangeDate = (t: number) => new Date((t + off) * 1000).toISOString().slice(0, 10)
+  if (exchangeDate(rmt) !== exchangeDate(barTs)) return null   // a different session's price
+  if (rmt < barTs) return null                                  // before this session opened
+  if (!(next > barTs)) return null                              // Yahoo has not moved on: not settled
+
+  const hi = meta.regularMarketDayHigh
+  const lo = meta.regularMarketDayLow
+  const bracket = typeof hi === "number" && typeof lo === "number" && lo > 0 && lo <= price && price <= hi
+  return {
+    date:   new Date(barTs * 1000).toISOString().slice(0, 10),
+    open:   rawOpen != null && rawOpen > 0 ? rawOpen : price,
+    high:   bracket ? hi! : price,
+    low:    bracket ? lo! : price,
+    close:  price,
+    volume: typeof meta.regularMarketVolume === "number" && meta.regularMarketVolume >= 0 ? meta.regularMarketVolume : 0,
+  }
 }
 
 function daysToRange(days: number): string {
@@ -252,7 +323,14 @@ export class YahooFinanceAdapter implements MarketAdapter {
     const quote     = result.indicators?.quote?.[0]
     if (!Array.isArray(timestamp) || !quote) return null
 
-    const bars = normalizeYahooBars(timestamp, quote, days)
+    const bars = normalizeYahooBars(timestamp, quote, days, result.meta)
+    // Say when the meta fill was used, so its first real nights can be checked
+    // against the close Yahoo publishes ~30 minutes later.
+    const lastIdx = timestamp.length - 1
+    if (lastIdx >= 0 && quote.close[lastIdx] == null && bars.length > 0 &&
+        bars[bars.length - 1].date === new Date(timestamp[lastIdx] * 1000).toISOString().slice(0, 10)) {
+      console.log(`[yahoo] ${symbol} ${bars[bars.length - 1].date} close was null — filled ${bars[bars.length - 1].close} from meta`)
+    }
     return bars.length > 0 ? bars : null
   }
 }
@@ -270,10 +348,24 @@ interface TwseResponse {
 // `timestamp` / `indicators` are optional on purpose: Yahoo answers 200 with a
 // result object carrying neither for a symbol it knows nothing about (observed
 // on 8215.TWO). Typing them as required made the old destructuring look safe.
+/** The parts of a v8 chart `meta` block the adapter reads. All optional: absent ⇒ unknown. */
+export interface YahooChartMeta {
+  regularMarketPrice?:   number
+  /** Unix seconds of the regular-session trade that `regularMarketPrice` is. */
+  regularMarketTime?:    number
+  regularMarketDayHigh?: number
+  regularMarketDayLow?:  number
+  regularMarketVolume?:  number
+  /** Exchange's current UTC offset in seconds (e.g. -14400 New York in summer). */
+  gmtoffset?:            number
+  /** The session Yahoo currently considers current — it rolls to the NEXT one after a close. */
+  currentTradingPeriod?: { regular?: { start?: number; end?: number } }
+}
+
 export interface YahooResponse {
   chart: {
     result?: Array<{
-      meta?: { regularMarketPrice?: number }
+      meta?: YahooChartMeta
       timestamp?: number[]
       indicators?: {
         quote?: Array<{
