@@ -23,22 +23,70 @@ jobs:
           # watchdog over Tailscale + bore; GitHub Actions cannot reach them (no public tunnel).
           R2=$(check "${{ secrets.APP_URL }}/__up")
 
+          # /__up is answered by the Worker edge and never reaches a backend, so it stayed
+          # green through the outage that began 2026-11-03 (both Render hosts answered 429
+          # with a Cloudflare challenge page; every scan failed). This one probe goes through
+          # the Worker to a backend — the same path every cron uses.
+          # History: R2 itself was /health until 2cd26f3 (2026-06-27), moved to /__up because
+          # the backend was deliberately suspended then and failed daily; backend health was
+          # left to AI-PM's Render API monitor, which only sees suspension (not a 429) and runs
+          # on chusMBp (off since 2026-09-06). A suspended primary now reads as WARN (the Worker
+          # fails over to standby); only both down is FAIL. Once a day only: each
+          # call wakes a free instance (~15 min awake ≈ 7.5 h/month of the pool); probing
+          # more often turns monitoring into keepalive (the 2026-06-19 incident).
+          # /health touches no database: it proves reachability, not data.
+          # Result: OK:<backend>:<version> | WARN:standby:<version> | FAIL:<reason>
+          probe_backend() {
+            local hdr body code backend ok version
+            hdr=$(mktemp); body=$(mktemp)
+            # No -L: a redirect here is a misconfiguration, not health.
+            # 120 s covers a free-tier cold start (30–60 s seen).
+            code=$(curl -s -D "$hdr" -o "$body" -w "%{http_code}" --connect-timeout 10 --max-time 120 "$1" 2>/dev/null)
+            backend=$(grep -i '^x-2560-backend:' "$hdr" | tail -1 | cut -d: -f2- | tr -d ' \r')
+            # A challenge page can come back as HTML; only the app's own JSON counts.
+            ok=$(jq -r '.ok' "$body" 2>/dev/null)
+            version=$(jq -r '"\(.version // "?") \(.sha // "?")"' "$body" 2>/dev/null)
+            rm -f "$hdr" "$body"
+            if [ -z "$code" ] || [ "$code" = "000" ]; then
+              echo "FAIL:no response (timeout or connection error)"
+            elif [ "$code" != "200" ]; then
+              echo "FAIL:HTTP ${code}${backend:+ via $backend}"
+            elif [ "$ok" != "true" ]; then
+              echo "FAIL:200 but body is not {\"ok\":true}${backend:+ via $backend}"
+            elif [ "$backend" = "standby" ]; then
+              echo "WARN:standby:${version}"
+            else
+              echo "OK:${backend:-unknown}:${version}"
+            fi
+          }
+          R3=$(probe_backend "${{ secrets.APP_URL }}/health")
+          # One retry: a cold start that overruns, or a single transient error, is not an outage.
+          case "$R3" in FAIL:*) sleep "${RETRY_WAIT:-30}"; R3=$(probe_backend "${{ secrets.APP_URL }}/health") ;; esac
+
           fmt_crit() {
             [ "$2" = "OK" ] && echo "[OK] $1" || echo "[FAIL] $1 ($2)"
           }
 
           L2=$(fmt_crit "2560-app (CF Worker)" "$R2")
+          case "$R3" in
+            OK:*)   L3="[OK] 2560 backend /health ($(echo "$R3" | cut -d: -f2), v$(echo "$R3" | cut -d: -f3-))" ;;
+            WARN:*) L3="[WARN] 2560 backend /health answered by STANDBY — primary is down (v$(echo "$R3" | cut -d: -f3-))" ;;
+            *)      L3="[FAIL] 2560 backend /health (${R3#FAIL:}) — scans and reminders cannot run" ;;
+          esac
 
-          CRITICAL_FAILS=$(printf '%s\n' "$R2" | grep -c "^FAIL" || true)
+          CRITICAL_FAILS=$(printf '%s\n%s\n' "$R2" "$R3" | grep -c "^FAIL" || true)
+          WARNS=$(printf '%s\n' "$R3" | grep -c "^WARN" || true)
           DATE=$(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M Taipei')
 
-          if [ "$CRITICAL_FAILS" -eq 0 ]; then
-            HEADER="✅ CF Worker healthy (${DATE})"
+          if [ "$CRITICAL_FAILS" -gt 0 ]; then
+            HEADER="🔴 ${CRITICAL_FAILS} critical check(s) DOWN (${DATE})"
+          elif [ "$WARNS" -gt 0 ]; then
+            HEADER="⚠️ 2560 running on the standby backend (${DATE})"
           else
-            HEADER="🔴 ${CRITICAL_FAILS} critical service(s) DOWN (${DATE})"
+            HEADER="✅ 2560 healthy: Worker + backend (${DATE})"
           fi
 
-          MSG=$(printf '%s\n%s' "$HEADER" "$L2")
+          MSG=$(printf '%s\n%s\n%s' "$HEADER" "$L2" "$L3")
           echo "$MSG"
 
           curl -s -X POST \
